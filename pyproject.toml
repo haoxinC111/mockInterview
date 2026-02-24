@@ -1,0 +1,24 @@
+[project]
+name = "python-brain"
+version = "0.1.0"
+description = "InterviewSim Chat-MVP backend service"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.116.0",
+  "httpx>=0.28.0",
+  "pydantic-settings>=2.10.0",
+  "pypdf>=5.0.0",
+  "python-multipart>=0.0.20",
+  "sqlmodel>=0.0.24",
+  "uvicorn>=0.35.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
