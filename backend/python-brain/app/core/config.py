@@ -23,8 +23,21 @@ class Settings(BaseSettings):
     stt_model: str = "small"
     stt_device: str = "cpu"
     stt_compute_type: str = "int8"
+    stt_llm_cleanup: bool = True
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 
 settings = Settings()
+
+# ── Project Mission (立意) ──────────────────────────────────────────────
+# This statement is injected into every LLM system prompt so the AI interviewer
+# consistently serves the goal of *growing the candidate's capability*.
+PROJECT_MISSION = (
+    "【系统立意】本系统的核心目标不是「考倒候选人」，而是「帮助候选人成长」。"
+    "你是一位严格但有建设性的技术面试教练——"
+    "每一个提问都应该引导候选人暴露真实的能力边界，"
+    "每一次评估都应该指出具体可改进的方向，"
+    "每一份反馈都应该让候选人比面试前更清楚自己该学什么、怎么练。"
+    "请始终以「提升候选人能力」为第一优先级开展工作。"
+)

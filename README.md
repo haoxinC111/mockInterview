@@ -20,6 +20,11 @@
 - `RESUME_PARSER_USE_LLM=true`
 - `INTERVIEW_ENGINE_USE_LLM=true`
 - `INTERVIEW_TURN_USE_LLM=true`（逐轮评分/追问，开启后延迟更高）
+- `RESUME_OCR_ENABLED=true`（本地 Ollama OCR 解析 PDF）
+
+语音输入（默认开启，本地 Whisper 推理）：
+- `STT_ENABLED=true`
+- `STT_MODEL=small`（可选 tiny/base/small/medium/large）
 
 日志落盘：
 - `LOG_DIR=logs`
@@ -35,7 +40,7 @@
 
 ```bash
 cd backend/python-brain
-uv sync --extra dev
+uv sync --extra dev --extra stt
 ```
 
 ### 2) 启动后端（同时托管前端页面）
@@ -59,4 +64,5 @@ uv run pytest -q
 ## 说明
 
 - 前端当前不需要单独启动进程（由后端 `app.main` 挂载并提供）。
+- 语音输入需要 `faster-whisper`（通过 `--extra stt` 安装）和 `ffmpeg`（`brew install ffmpeg`，WAV 格式可免）。
 - 若你后续拆分前后端独立部署，再增加 `frontend` 独立 dev server。

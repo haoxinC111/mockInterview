@@ -68,6 +68,40 @@ function replaceWords(text) {
   return out;
 }
 
+/* ---------- Mission Modal ---------- */
+(function initMission() {
+  const btn = byId("missionBtn");
+  const modal = byId("missionModal");
+  const closeBtn = byId("missionCloseBtn");
+
+  async function showMission() {
+    try {
+      const resp = await fetch("/api/v1/mission");
+      const data = await resp.json();
+      byId("missionTitle").textContent = stealthOn ? "ChatPal 立意" : (data.title || "InterviewSim 立意");
+      byId("missionSubtitle").textContent = data.subtitle || "";
+      byId("missionCore").textContent = data.core || "";
+      const ul = byId("missionPrinciples");
+      ul.innerHTML = "";
+      (data.principles || []).forEach((p) => {
+        const li = document.createElement("li");
+        li.textContent = p;
+        ul.appendChild(li);
+      });
+      byId("missionFull").textContent = data.mission || "";
+    } catch (e) {
+      byId("missionFull").textContent = "加载失败: " + e.message;
+    }
+    modal.classList.remove("hidden");
+  }
+
+  btn.addEventListener("click", showMission);
+  closeBtn.addEventListener("click", () => modal.classList.add("hidden"));
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) modal.classList.add("hidden");
+  });
+})();
+
 /* ---------- Sidebar Collapse ---------- */
 function collapseSidebar() {
   byId("sidebar").classList.add("collapsed");
@@ -597,6 +631,9 @@ byId("chatInput").addEventListener("keydown", (e) => {
           const wavBlob = await blobToWav16k(rawBlob);
           const form = new FormData();
           form.append("audio", wavBlob, "recording.wav");
+          // Send the last AI question as context for better recognition
+          const lastAiMsg = [...document.querySelectorAll(".msg.assistant")].pop();
+          if (lastAiMsg) form.append("context", lastAiMsg.textContent);
           const resp = await fetch("/api/v1/stt", { method: "POST", body: form });
           if (!resp.ok) throw new Error(`STT ${resp.status}`);
           const data = await resp.json();

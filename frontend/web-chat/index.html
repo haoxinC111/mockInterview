@@ -16,6 +16,7 @@
       </div>
       <p class="subtitle" data-original="AI 驱动的模拟面试平台">AI 驱动的模拟面试平台</p>
       <div class="header-tools">
+        <button id="missionBtn" class="tool-toggle" title="查看项目立意">💡</button>
         <button id="darkToggle" class="tool-toggle" title="切换深色模式">🌙</button>
         <button id="stealthToggle" class="tool-toggle" title="隐身模式：隐藏敏感词" >🕶️</button>
         <button id="openViewerBtn" class="btn btn-secondary">全屏查看工作流</button>
@@ -156,6 +157,19 @@
         </div>
       </section>
     </main>
+
+    <!-- Mission Modal -->
+    <div id="missionModal" class="mission-overlay hidden">
+      <div class="mission-modal">
+        <button class="mission-close" id="missionCloseBtn">&times;</button>
+        <div class="mission-icon">💡</div>
+        <h2 class="mission-title" id="missionTitle">InterviewSim 立意</h2>
+        <p class="mission-subtitle" id="missionSubtitle"></p>
+        <div class="mission-core" id="missionCore"></div>
+        <ul class="mission-principles" id="missionPrinciples"></ul>
+        <p class="mission-full" id="missionFull"></p>
+      </div>
+    </div>
   </div>
   <script src="/web/app.js"></script>
 </body>

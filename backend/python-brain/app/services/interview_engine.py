@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from app.core.config import settings
+from app.core.config import PROJECT_MISSION, settings
 from app.core.logging import log_event, log_summary
 from app.models.schemas import InterviewOutline, OutlineModule, OutlineTopic, TurnEvaluation
 from app.services.llm_client import RelayLLMClient
@@ -220,6 +220,7 @@ class InterviewEngine:
         resume_text: str,
     ) -> InterviewOutline:
         system_prompt = (
+            f"{PROJECT_MISSION}\n"
             "你是资深技术面试官。根据候选人简历与目标岗位生成结构化面试框架。"
             "严格输出 JSON: {\"modules\": [{\"module_name\": str, \"topics\": [{\"name\": str, \"rubric_keywords\": [str]}]}]}"
             "要求: 3-5 个模块，每模块 2-3 个主题，每主题 3-6 个关键词。"
@@ -294,6 +295,7 @@ class InterviewEngine:
                 model = str(state.get("model") or settings.llm_model_default)
                 role = str(state.get("target_role") or "Agent Engineer")
                 system_prompt = (
+                    f"{PROJECT_MISSION}\n"
                     "你是技术面试官。输出 JSON: {\"question\": \"...\"}。"
                     "题目必须结合简历和岗位，具体且可追问。"
                     "只能输出一个问题，禁止编号、禁止分点、禁止同时提多个并列子问题。"                    "重要: 每个问题只聘焦一个具体技术点，不要要求候选人同时回答多个方面。"
@@ -326,9 +328,11 @@ class InterviewEngine:
                 project_hint = f"请结合你在“{valid_project[:18]}”里的实战细节回答。"
         return self._normalize_single_question(f"关于【{topic['module_name']}】中的 {topic['topic_name']}，请解释一下 {topic['rubric_keywords'][0]} 的核心原理和你的实践经验。{project_hint}".strip())
 
-    def evaluate(self, user_message: str, keywords: list[str]) -> tuple[int, list[str], list[str]]:
-        """Keyword-based fallback evaluator. Returns a conservative neutral score
-        since substring matching is unreliable as a quality signal."""
+    def evaluate(self, user_message: str, keywords: list[str]) -> tuple[int, list[str], list[str], str]:
+        """Keyword-based fallback evaluator. Returns (score, evidence, gaps, score_rationale).
+
+        Produces meaningful sentences (not bare keywords) so the frontend
+        eval card always has useful content for the user."""
         text = user_message.lower()
         hit = [kw for kw in keywords if kw.lower() in text]
         miss = [kw for kw in keywords if kw.lower() not in text]
@@ -343,7 +347,31 @@ class InterviewEngine:
             score = 4
         else:
             score = 3
-        return score, hit, miss
+
+        # Build descriptive evidence (not bare keywords)
+        evidence = [f"回答中提及了关键概念「{kw}」" for kw in hit[:4]]
+        if not evidence:
+            evidence = ["回答涵盖了部分相关内容（关键词覆盖较少，仅供参考）"]
+
+        # Build descriptive gaps
+        gaps = [f"未涉及关键点「{kw}」，建议补充该方面的理解和实践经验" for kw in miss[:4]]
+        if not gaps and score < 7:
+            gaps = ["回答整体偏简略，建议结合具体项目实践展开说明"]
+
+        # Build meaningful rationale
+        total = len(keywords)
+        hit_count = len(hit)
+        rationale = (
+            f"[规则评估] 本轮为关键词匹配评分（LLM 评估未启用或超时），"
+            f"候选人回答在 {total} 个关键词中命中了 {hit_count} 个"
+            f"（{'、'.join(hit[:5]) if hit else '无'}），"
+            f"未覆盖 {len(miss)} 个"
+            f"（{'、'.join(miss[:5]) if miss else '无'}）。"
+            f"得分 {score}/10。"
+            f"注意：关键词匹配无法评估回答深度和逻辑性，此评分仅供参考。"
+        )
+
+        return score, evidence, gaps, rationale
 
     def evaluate_with_llm(
         self,
@@ -367,6 +395,7 @@ class InterviewEngine:
                 "低薪岗位答到基本原理即可得4分，高薪岗位需要体现 tradeoff 分析和生产实践才能得4分。"
             )
         system_prompt = (
+            f"{PROJECT_MISSION}\n"
             "你是资深技术面试评分器。只输出 JSON，字段如下:\n"
             "  score: 整数 1-10\n"
             "  score_rationale: 详细的评分依据(200-400字)，必须包含：\n"
@@ -431,6 +460,7 @@ class InterviewEngine:
         conversation_context: list[dict[str, str]] | None = None,
     ) -> str:
         system_prompt = (
+            f"{PROJECT_MISSION}\n"
             "你是技术面试官。只返回一句中文追问或转场问题，不要解释。"
             "输出 JSON: {\"question\": \"...\"}"
             "重要: 每个问题只聚焦一个具体技术点，不要同时问多个方面。"
@@ -497,7 +527,12 @@ class InterviewEngine:
         if llm_reason:
             reason = llm_reason
         elif gaps:
-            reason = f"关键点覆盖不足，缺少 {', '.join(gaps[:2])}"
+            # Extract keyword names from descriptive gap strings like "未涉及关键点「X」…"
+            kw_names = [m.group(1) for g in gaps[:3] if (m := re.search(r"「(.+?)」", g))]
+            if kw_names:
+                reason = f"关键点覆盖不足，缺少 {'、'.join(kw_names)}"
+            else:
+                reason = "回答有一定基础，但关键点覆盖不够完整"
         elif score <= 1:
             reason = "回答偏笼统，缺少可验证的技术细节"
         else:
@@ -580,9 +615,13 @@ class InterviewEngine:
             except Exception as exc:
                 llm_evaluate_failed = True
                 log_event("engine.turn.evaluate.llm_fallback", error=str(exc))
-                score, evidence, gaps = self.evaluate(user_message, topic["rubric_keywords"])
+                score, evidence, gaps, llm_score_rationale = self.evaluate(user_message, topic["rubric_keywords"])
+                llm_reasoning = f"[规则评估] LLM 评估超时或出错（{str(exc)[:80]}），回退到关键词匹配模式。"
+                llm_reference_answer = f"本题考查「{topic['topic_name']}」，关键词包括：{'、'.join(topic['rubric_keywords'][:6])}。建议围绕这些概念结合项目实践展开回答。"
         else:
-            score, evidence, gaps = self.evaluate(user_message, topic["rubric_keywords"])
+            score, evidence, gaps, llm_score_rationale = self.evaluate(user_message, topic["rubric_keywords"])
+            llm_reasoning = "[规则评估] LLM 评估未启用，使用关键词匹配评分。"
+            llm_reference_answer = f"本题考查「{topic['topic_name']}」，关键词包括：{'、'.join(topic['rubric_keywords'][:6])}。建议围绕这些概念结合项目实践展开回答。"
         state["turn_count"] += 1
         log_event(
             "engine.turn.evaluated",
@@ -607,7 +646,7 @@ class InterviewEngine:
             state["depth"] += 1
             decision = "deepen"
             next_action = "follow_up"
-            anchors = "、".join((evidence or topic["rubric_keywords"])[:2])
+            anchors = "、".join(topic["rubric_keywords"][:2])
             question = f"你刚提到了 {anchors}，请结合具体线上案例说明设计取舍和失败复盘。"
             depth_delta = 1
             decision_reason = "LLM 超时，采用保守追问策略避免过早切题"
@@ -681,10 +720,13 @@ class InterviewEngine:
         turn_eval = TurnEvaluation(
             topic=topic["topic_name"],
             score=score,
+            score_rationale=llm_score_rationale,
             evidence=evidence,
             gaps=gaps,
             depth_delta=depth_delta,
             decision=decision,  # type: ignore[arg-type]
+            reasoning=llm_reasoning,
+            reference_answer=llm_reference_answer,
         )
         state["evaluations"].append(turn_eval.model_dump())
 
@@ -707,7 +749,7 @@ class InterviewEngine:
                 llm_followup_failed = True
                 log_event("engine.turn.followup.llm_fallback", error=str(exc))
                 if next_action == "follow_up":
-                    anchors = "、".join((evidence or topic["rubric_keywords"])[:2])
+                    anchors = "、".join(topic["rubric_keywords"][:2])
                     question = f"继续围绕 {anchors}，请补充关键实现细节与线上指标变化。"
         log_event(
             "engine.turn.decision",

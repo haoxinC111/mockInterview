@@ -6,11 +6,11 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import PlainTextResponse
 from sqlmodel import Session, select
 
-from app.core.config import settings
+from app.core.config import PROJECT_MISSION, settings
 from app.core.database import get_session
 from app.core.logging import log_event, log_summary
 from app.core.request_context import get_request_id
@@ -32,6 +32,22 @@ from app.services.resume_parser import ResumeParser
 router = APIRouter(prefix="/api/v1", tags=["interview"])
 engine = InterviewEngine()
 report_service = ReportService()
+
+
+@router.get("/mission")
+def get_mission():
+    """Return the project mission statement (立意)."""
+    return {
+        "mission": PROJECT_MISSION,
+        "title": "InterviewSim 立意",
+        "subtitle": "本系统的一切设计，服务于一个核心目标",
+        "core": "帮助候选人成长",
+        "principles": [
+            "每一个提问引导候选人暴露真实能力边界",
+            "每一次评估指出具体可改进的方向",
+            "每一份反馈让候选人比面试前更清楚该学什么、怎么练",
+        ],
+    }
 
 
 def _clip(text: str, max_len: int = 1200) -> str:
@@ -359,13 +375,8 @@ def send_message(session_id: int, req: SendMessageRequest, db: Session = Depends
         score=result.turn_eval.score,
     )
 
-    # Attach LLM reasoning to turn_eval for frontend visibility
-    if result.reasoning:
-        result.turn_eval.reasoning = result.reasoning
-    if result.reference_answer:
-        result.turn_eval.reference_answer = result.reference_answer
-    if result.score_rationale:
-        result.turn_eval.score_rationale = result.score_rationale
+    # reasoning, reference_answer, score_rationale are now set directly
+    # in TurnEvaluation during process_turn() — no extra attachment needed.
 
     return SendMessageResponse(
         assistant_message=result.question,
@@ -376,8 +387,16 @@ def send_message(session_id: int, req: SendMessageRequest, db: Session = Depends
 
 
 @router.post("/stt")
-async def speech_to_text(audio: UploadFile = File(...)):
-    """Transcribe audio to text using local Whisper model."""
+async def speech_to_text(
+    audio: UploadFile = File(...),
+    context: str = Form(default=""),
+):
+    """Transcribe audio to text using local Whisper model.
+
+    The optional `context` field (e.g. the current interview question)
+    is used as Whisper initial_prompt for better Chinese-English recognition
+    and optionally for LLM-based post-processing.
+    """
     if not settings.stt_enabled:
         raise HTTPException(status_code=503, detail="STT 未启用，请在 .env 中设置 STT_ENABLED=true")
     try:
@@ -390,7 +409,11 @@ async def speech_to_text(audio: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="空音频文件")
 
     try:
-        text = transcribe_audio(audio_bytes, filename=audio.filename or "audio.webm")
+        text = transcribe_audio(
+            audio_bytes,
+            filename=audio.filename or "audio.webm",
+            context=context or None,
+        )
     except Exception as exc:
         log_event("stt.error", error=str(exc))
         raise HTTPException(status_code=500, detail=f"语音识别失败: {exc}")

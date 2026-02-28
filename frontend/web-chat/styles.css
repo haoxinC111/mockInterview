@@ -916,3 +916,113 @@ body {
     overflow: visible;
   }
 }
+
+/* --- Mission Modal --- */
+.mission-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  animation: fadeIn 0.2s ease;
+}
+.mission-overlay.hidden { display: none; }
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.mission-modal {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: 32px 36px;
+  max-width: 520px;
+  width: 90%;
+  position: relative;
+  animation: slideUp 0.3s ease;
+  text-align: center;
+}
+
+.mission-close {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  line-height: 1;
+}
+.mission-close:hover { color: var(--text-main); }
+
+.mission-icon {
+  font-size: 2.5rem;
+  margin-bottom: 8px;
+}
+
+.mission-title {
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: var(--text-main);
+  margin-bottom: 4px;
+}
+
+.mission-subtitle {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  margin-bottom: 16px;
+}
+
+.mission-core {
+  display: inline-block;
+  background: var(--primary);
+  color: white;
+  font-size: 1.15rem;
+  font-weight: 600;
+  padding: 8px 24px;
+  border-radius: 999px;
+  margin-bottom: 20px;
+}
+
+.mission-principles {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 20px;
+  text-align: left;
+}
+.mission-principles li {
+  position: relative;
+  padding: 8px 0 8px 24px;
+  font-size: 0.92rem;
+  color: var(--text-main);
+  border-bottom: 1px solid var(--border);
+}
+.mission-principles li:last-child { border-bottom: none; }
+.mission-principles li::before {
+  content: "✓";
+  position: absolute;
+  left: 0;
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.mission-full {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+  text-align: left;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
