@@ -1,0 +1,116 @@
+:root {
+  --bg: #f1f5f9;
+  --panel: #ffffff;
+  --line: #dbe2ea;
+  --text: #0f172a;
+  --muted: #64748b;
+  --accent: #0f766e;
+  --accent-soft: #ccfbf1;
+  --code: #020617;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "SF Pro Text", "PingFang SC", "Noto Sans SC", sans-serif;
+  background: radial-gradient(circle at top right, #dbeafe 0%, var(--bg) 42%);
+  color: var(--text);
+}
+
+.viewer-layout {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  min-height: 100vh;
+}
+
+.session-panel {
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  padding: 16px;
+  overflow: auto;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.panel-header h1 { font-size: 1.1rem; margin: 0; }
+.panel-subtitle { color: var(--muted); margin-top: 6px; font-size: 0.9rem; }
+
+.session-list { margin-top: 16px; display: grid; gap: 8px; }
+.session-item {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  cursor: pointer;
+  background: #fff;
+}
+.session-item.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.session-item .meta {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.content-panel { padding: 20px; overflow: auto; }
+.content-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+#sessionTitle { margin: 0 0 6px; }
+.muted { color: var(--muted); margin: 0; }
+
+.header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.tab-btn, button {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 12px;
+  background: #fff;
+  cursor: pointer;
+}
+.tab-btn.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.view {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  padding: 14px;
+  min-height: calc(100vh - 140px);
+  overflow: auto;
+}
+.hidden { display: none; }
+
+.trace-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+.trace-card h3 { margin: 0 0 8px; font-size: 1rem; }
+.kv { margin: 4px 0; font-size: 0.94rem; }
+.kv b { color: #0f766e; }
+
+pre {
+  margin: 0;
+  background: var(--code);
+  color: #dbeafe;
+  padding: 12px;
+  border-radius: 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 980px) {
+  .viewer-layout { grid-template-columns: 1fr; }
+  .session-panel { border-right: none; border-bottom: 1px solid var(--line); }
+  .view { min-height: 420px; }
+}

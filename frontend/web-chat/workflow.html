@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>InterviewSim - 工作流查看器</title>
+  <link rel="stylesheet" href="/web/workflow-viewer.css" />
+</head>
+<body>
+  <div class="viewer-layout">
+    <aside class="session-panel">
+      <div class="panel-header">
+        <h1>会话列表</h1>
+        <button id="refreshBtn">刷新</button>
+      </div>
+      <div class="panel-subtitle">选择会话查看完整调度轨迹</div>
+      <div id="sessionList" class="session-list"></div>
+    </aside>
+
+    <main class="content-panel">
+      <header class="content-header">
+        <div>
+          <h2 id="sessionTitle">未选择会话</h2>
+          <p id="sessionMeta" class="muted">请选择左侧会话</p>
+        </div>
+        <div class="header-actions">
+          <button id="tabTrace" class="tab-btn active">可读追踪</button>
+          <button id="tabWorkflow" class="tab-btn">工作流JSON</button>
+          <button id="tabReport" class="tab-btn">报告</button>
+          <button id="tabLLM" class="tab-btn">LLM事件</button>
+        </div>
+      </header>
+
+      <section id="traceView" class="view"></section>
+      <section id="workflowView" class="view hidden"></section>
+      <section id="reportView" class="view hidden"></section>
+      <section id="llmView" class="view hidden"></section>
+    </main>
+  </div>
+  <script src="/web/workflow-viewer.js"></script>
+</body>
+</html>

@@ -1,38 +1,14 @@
-# Environment
-.env
-.venv
-venv/
-env/
-
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
-*.egg-info/
-.eggs/
-*.egg
-
-# Testing
+*.pyo
+*.pyd
 .pytest_cache/
-.coverage
-htmlcov/
+.venv/
+.env
 
-# Database
+# Local runtime data
 *.db
-*.sqlite3
 
-# Logs
-logs/
-*.log
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# OS
+# OS files
 .DS_Store
-Thumbs.db

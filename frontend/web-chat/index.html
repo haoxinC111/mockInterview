@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ChatPal</title>
+  <link rel="stylesheet" href="/web/styles.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <header class="app-header">
+      <div class="logo">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+        <h1 data-original="InterviewSim">InterviewSim</h1>
+      </div>
+      <p class="subtitle" data-original="AI 驱动的模拟面试平台">AI 驱动的模拟面试平台</p>
+      <div class="header-tools">
+        <button id="darkToggle" class="tool-toggle" title="切换深色模式">🌙</button>
+        <button id="stealthToggle" class="tool-toggle" title="隐身模式：隐藏敏感词" >🕶️</button>
+        <button id="openViewerBtn" class="btn btn-secondary">全屏查看工作流</button>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <!-- Left Sidebar: Controls & Info -->
+      <aside class="sidebar" id="sidebar">
+        <button class="sidebar-toggle expand-toggle" id="sidebarToggle" title="展开/收起侧栏">☰</button>
+        <section class="card step-card open" id="step1">
+          <div class="card-header">
+            <span class="step-number">1</span>
+            <h2 data-original="上传简历">上传简历</h2>
+            <svg class="chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </div>
+          <div class="step-body-wrapper">
+          <div class="card-body">
+            <div class="file-upload">
+              <input id="resumeFile" type="file" accept=".pdf,.txt" class="hidden-input" />
+              <label for="resumeFile" class="file-label">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                <span id="fileName">选择 PDF 或 TXT 文件</span>
+              </label>
+            </div>
+            <button id="uploadBtn" class="btn btn-primary w-full mt-3">上传并解析</button>
+            <div class="upload-actions mt-2">
+              <p class="upload-actions-title">缓存选项</p>
+              <p class="upload-actions-hint">命中缓存会更快；若你更新了解析逻辑，请使用重新解析。</p>
+              <button id="reparseBtn" class="cache-action-btn cache-reparse w-full">↻ 重新解析（不使用缓存）</button>
+              <button id="deleteCacheBtn" class="cache-action-btn cache-delete w-full">✕ 删除这个文件的缓存</button>
+            </div>
+            <div id="profileOutputWrapper" class="hidden mt-3">
+              <p class="text-sm font-medium mb-1">解析结果:</p>
+              <pre id="profileOutput" class="code-block"></pre>
+            </div>
+          </div>
+          </div>
+        </section>
+
+        <section class="card step-card disabled" id="step2">
+          <div class="card-header">
+            <span class="step-number">2</span>
+            <h2 data-original="面试设置">面试设置</h2>
+            <svg class="chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </div>
+          <div class="step-body-wrapper">
+          <div class="card-body">
+            <div class="form-group">
+              <label>目标岗位</label>
+              <input id="targetRole" value="Agent Engineer" class="form-control" />
+            </div>
+            <div class="form-group">
+              <label>期望月薪</label>
+              <input id="expectedSalary" value="20k-30k" placeholder="例如 20k-30k（月薪）" class="form-control" />
+            </div>
+            <div class="form-group">
+              <label>城市</label>
+              <select id="city" class="form-control">
+                <option value="北京" selected>北京</option>
+                <option value="上海">上海</option>
+                <option value="深圳">深圳</option>
+                <option value="杭州">杭州</option>
+                <option value="广州">广州</option>
+                <option value="成都">成都</option>
+                <option value="南京">南京</option>
+                <option value="武汉">武汉</option>
+                <option value="西安">西安</option>
+                <option value="其他">其他</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>AI 模型</label>
+              <select id="model" class="form-control">
+                <option value="MiniMax-M2.5" selected>MiniMax-M2.5</option>
+                <option value="glm-5">GLM-5</option>
+              </select>
+            </div>
+            <button id="startBtn" class="btn btn-primary w-full mt-2" data-original="开始面试">开始面试</button>
+            <p id="sessionInfo" class="text-sm text-muted mt-2 text-center"></p>
+          </div>
+          </div>
+        </section>
+
+        <section class="card step-card disabled" id="step4">
+          <div class="card-header">
+            <span class="step-number">3</span>
+            <h2 data-original="面试报告">面试报告</h2>
+            <svg class="chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </div>
+          <div class="step-body-wrapper">
+          <div class="card-body">
+            <button id="finishBtn" class="btn btn-danger w-full mb-3" data-original="结束面试并生成报告">结束面试并生成报告</button>
+            <button id="openReportViewerBtn" class="btn btn-secondary w-full mb-3">全屏查看报告/工作流</button>
+            <div id="reportOutputWrapper" class="hidden">
+              <pre id="reportOutput" class="code-block"></pre>
+            </div>
+          </div>
+          </div>
+        </section>
+      </aside>
+
+      <!-- Right Content: Chat -->
+      <section class="chat-container card">
+        <div class="chat-header">
+          <h2 data-original="面试对话">面试对话</h2>
+          <span class="status-dot"></span>
+          <button id="workflowBtn" class="btn btn-secondary ml-auto">工作流查看</button>
+        </div>
+        <div id="chatBox" class="chat-box">
+          <div class="empty-state">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="text-muted mb-2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+            <p data-original="完成左侧设置，开始你的模拟面试">完成左侧设置，开始你的模拟面试</p>
+          </div>
+        </div>
+        <div class="chat-input-area">
+          <textarea id="chatInput" placeholder="输入你的回答..." class="form-control chat-textarea" rows="1" disabled></textarea>
+          <button id="micBtn" class="btn btn-secondary btn-icon mic-btn" title="语音输入" disabled>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
+          </button>
+          <button id="sendBtn" class="btn btn-primary btn-icon" disabled>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+          </button>
+        </div>
+        <p id="thinkingHint" class="thinking-hint hidden">LLM 思考中，请稍候...</p>
+
+        <div id="workflowPanel" class="workflow-panel hidden">
+          <div class="workflow-toolbar">
+            <select id="sessionSelect" class="form-control">
+              <option value="">请选择会话</option>
+            </select>
+            <button id="refreshSessionsBtn" class="btn btn-secondary">刷新历史</button>
+            <button id="viewCurrentWorkflowBtn" class="btn btn-secondary">查看当前</button>
+            <button id="viewSelectedWorkflowBtn" class="btn btn-secondary">看JSON</button>
+            <button id="viewSelectedTraceBtn" class="btn btn-secondary">看追踪</button>
+          </div>
+          <pre id="workflowOutput" class="code-block workflow-output"></pre>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="/web/app.js"></script>
+</body>
+</html>
