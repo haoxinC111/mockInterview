@@ -13,6 +13,7 @@ def init_db() -> None:
     SQLModel.metadata.create_all(engine)
     # Lightweight migration: add columns that may not exist in older databases.
     _migrate_add_column("interviewsession", "city", "TEXT DEFAULT '北京'")
+    _migrate_add_column("interviewsession", "answer_style", "TEXT DEFAULT 'concise'")
 
 
 def get_session():

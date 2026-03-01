@@ -9,6 +9,10 @@ from app.core.logging import log_event, log_summary
 from app.models.schemas import InterviewOutline, OutlineModule, OutlineTopic, TurnEvaluation
 from app.services.llm_client import RelayLLMClient
 
+
+class LLMEvaluationError(Exception):
+    """Raised when LLM evaluation fails and no fallback is appropriate."""
+
 DEFAULT_OUTLINE = [
     (
         "LLM 基础",
@@ -46,8 +50,55 @@ class EngineResult:
 
 
 class InterviewEngine:
+    # Topic → (primary_dimension, [secondary_dimensions]) mapping per §8.1
+    TOPIC_DIMENSION_MAP: dict[str, tuple[str, list[str]]] = {
+        "Transformer 原理": ("technical_depth", ["architecture_design"]),
+        "Prompt 设计": ("technical_depth", ["engineering_practice"]),
+        "索引与召回": ("technical_depth", ["architecture_design", "engineering_practice"]),
+        "检索优化": ("architecture_design", ["technical_depth", "engineering_practice"]),
+        "状态机与工具调用": ("architecture_design", ["technical_depth"]),
+        "稳定性与回退": ("engineering_practice", ["architecture_design"]),
+        "项目实战深挖": ("engineering_practice", ["technical_depth", "architecture_design"]),
+        # Resume-signal generated topics
+        "架构设计": ("architecture_design", ["technical_depth", "engineering_practice"]),
+        "稳定性与故障处理": ("engineering_practice", ["architecture_design"]),
+        "并发与性能优化": ("technical_depth", ["engineering_practice"]),
+        "服务治理": ("engineering_practice", ["architecture_design"]),
+        "缓存与数据库协同": ("architecture_design", ["technical_depth"]),
+        "查询与容量治理": ("engineering_practice", ["architecture_design"]),
+        "RAG 检索链路": ("technical_depth", ["architecture_design"]),
+        "Agent 工具编排": ("architecture_design", ["technical_depth"]),
+        "系统设计与权衡": ("architecture_design", ["engineering_practice"]),
+        "项目复盘与改进": ("engineering_practice", ["technical_depth"]),
+        "LangGraph 设计": ("architecture_design", ["technical_depth"]),
+    }
+    DEFAULT_DIMENSION = ("technical_depth", ["architecture_design"])
+
     def __init__(self) -> None:
         self.llm_client = RelayLLMClient()
+
+    @classmethod
+    def _get_topic_dimensions(cls, topic_name: str) -> tuple[str, list[str]]:
+        """Return (primary_dimension, secondary_dimensions) for a topic."""
+        # Try exact match first, then substring match
+        if topic_name in cls.TOPIC_DIMENSION_MAP:
+            return cls.TOPIC_DIMENSION_MAP[topic_name]
+        for key, value in cls.TOPIC_DIMENSION_MAP.items():
+            if key in topic_name or topic_name in key:
+                return value
+        return cls.DEFAULT_DIMENSION
+
+    @classmethod
+    def _compute_dimension_scores(cls, topic_name: str, score: int) -> tuple[dict[str, int], str]:
+        """Compute per-dimension scores from the overall score and topic mapping.
+
+        Primary dimension gets the full score. Secondary dimensions get
+        a slightly attenuated score (score - 1, min 1)."""
+        primary, secondaries = cls._get_topic_dimensions(topic_name)
+        dim_scores: dict[str, int] = {primary: score}
+        for dim in secondaries:
+            dim_scores[dim] = max(1, score - 1)
+        return dim_scores, primary
 
     @staticmethod
     def _is_valid_project_entry(text: str) -> bool:
@@ -238,14 +289,14 @@ class InterviewEngine:
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             force_json_object=True,
-            timeout_s=25.0,
+            timeout_s=60.0,
         )
         outline = InterviewOutline.model_validate(data)
         if not outline.modules:
             raise ValueError("empty outline from llm")
         return outline
 
-    def init_state(self, outline: InterviewOutline, model: str | None = None, target_role: str | None = None, expected_salary: str | None = None, city: str | None = None) -> dict[str, Any]:
+    def init_state(self, outline: InterviewOutline, model: str | None = None, target_role: str | None = None, expected_salary: str | None = None, city: str | None = None, answer_style: str | None = None) -> dict[str, Any]:
         return {
             "module_idx": 0,
             "topic_idx": 0,
@@ -255,11 +306,13 @@ class InterviewEngine:
             "max_turns": 12,
             "evaluations": [],
             "decision_traces": [],
+            "asked_questions": [],
             "outline": outline.model_dump(),
             "model": model or settings.llm_model_default,
             "target_role": target_role or "Agent Engineer",
             "expected_salary": expected_salary or "",
             "city": city or "北京",
+            "answer_style": answer_style or "concise",
             "finished": False,
         }
 
@@ -277,6 +330,21 @@ class InterviewEngine:
             "topic_name": topics[ti]["name"],
             "rubric_keywords": topics[ti]["rubric_keywords"],
         }
+
+    @staticmethod
+    def _answer_style_prompt(answer_style: str) -> str:
+        """Return a prompt fragment that calibrates interview style."""
+        if answer_style == "thorough":
+            return (
+                "【答题风格: 深度发散】面试官应鼓励候选人连点成线、展开思考，"
+                "追问时引导候选人从不同角度分析（原理-实践-权衡-演进），"
+                "评分时对广度和体系化思考给予额外加分。"
+            )
+        return (
+            "【答题风格: 精准干练】面试官应引导候选人直击要点、简明扼要，"
+            "追问时聚焦核心技术细节而非发散，"
+            "评分时对精确性和问题直接关联度给予额外加分，冗余内容适当扣分。"
+        )
 
     def first_question(
         self,
@@ -313,7 +381,7 @@ class InterviewEngine:
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
                     force_json_object=True,
-                    timeout_s=20.0,
+                    timeout_s=45.0,
                 )
                 question = str(data.get("question", "")).strip()
                 if question:
@@ -383,6 +451,7 @@ class InterviewEngine:
         conversation_context: list[dict[str, str]] | None = None,
         expected_salary: str | None = None,
         city: str | None = None,
+        answer_style: str | None = None,
     ) -> tuple[int, list[str], list[str], str | None, str | None, str | None, str | None, str | None]:
         """Returns (score, evidence, gaps, recommend_action, reason, reasoning, reference_answer, score_rationale)."""
         salary_calibration = ""
@@ -394,8 +463,10 @@ class InterviewEngine:
                 "期望月薪越高，对回答深度、系统设计能力和工程实践的要求越严格。"
                 "低薪岗位答到基本原理即可得4分，高薪岗位需要体现 tradeoff 分析和生产实践才能得4分。"
             )
+        style_instruction = self._answer_style_prompt(answer_style or "concise")
         system_prompt = (
             f"{PROJECT_MISSION}\n"
+            f"{style_instruction}\n"
             "你是资深技术面试评分器。只输出 JSON，字段如下:\n"
             "  score: 整数 1-10\n"
             "  score_rationale: 详细的评分依据(200-400字)，必须包含：\n"
@@ -435,7 +506,7 @@ class InterviewEngine:
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             force_json_object=True,
-            timeout_s=15.0,
+            timeout_s=90.0,
         )
         score = int(data.get("score", 1))
         score = max(1, min(10, score))
@@ -458,13 +529,25 @@ class InterviewEngine:
         user_message: str,
         target_role: str,
         conversation_context: list[dict[str, str]] | None = None,
+        asked_questions: list[str] | None = None,
+        answer_style: str | None = None,
     ) -> str:
+        style_instruction = self._answer_style_prompt(answer_style or "concise")
+        dedup_hint = ""
+        if asked_questions:
+            recent = asked_questions[-8:]
+            dedup_hint = (
+                "以下问题已经问过，你必须避免重复或相似的提问角度：\n"
+                + "\n".join(f"- {q}" for q in recent) + "\n"
+            )
         system_prompt = (
             f"{PROJECT_MISSION}\n"
+            f"{style_instruction}\n"
             "你是技术面试官。只返回一句中文追问或转场问题，不要解释。"
             "输出 JSON: {\"question\": \"...\"}"
             "重要: 每个问题只聚焦一个具体技术点，不要同时问多个方面。"
             "如果候选人的回答涉及多个可深入的点，选择最值得追问的一个点来提问。"
+            f"{dedup_hint}"
         )
         # Format conversation context as readable chat log
         context_str = ""
@@ -489,7 +572,7 @@ class InterviewEngine:
             user_prompt=user_prompt
             + "\n要求：只能输出一个问题，不要分点，不要编号，不要给多问并列。只聚焦一个技术细节。",
             force_json_object=True,
-            timeout_s=15.0,
+            timeout_s=45.0,
         )
         question = str(data.get("question", "")).strip()
         if not question:
@@ -590,6 +673,7 @@ class InterviewEngine:
         target_role = str(state.get("target_role") or "Agent Engineer")
         expected_salary = str(state.get("expected_salary") or "")
         city = str(state.get("city") or "北京")
+        answer_style = str(state.get("answer_style") or "concise")
         use_llm = settings.interview_turn_use_llm and self.llm_client.is_enabled()
         llm_recommend_action: str | None = None
         llm_reason: str | None = None
@@ -610,14 +694,17 @@ class InterviewEngine:
                     conversation_context=conversation_context,
                     expected_salary=expected_salary,
                     city=city,
+                    answer_style=answer_style,
                 )
                 decision_source = "llm"
             except Exception as exc:
+                # P0: LLM enabled but failed → surface error, do NOT fall back to keyword scoring.
+                # The route layer catches LLMEvaluationError and returns 503.
                 llm_evaluate_failed = True
-                log_event("engine.turn.evaluate.llm_fallback", error=str(exc))
-                score, evidence, gaps, llm_score_rationale = self.evaluate(user_message, topic["rubric_keywords"])
-                llm_reasoning = f"[规则评估] LLM 评估超时或出错（{str(exc)[:80]}），回退到关键词匹配模式。"
-                llm_reference_answer = f"本题考查「{topic['topic_name']}」，关键词包括：{'、'.join(topic['rubric_keywords'][:6])}。建议围绕这些概念结合项目实践展开回答。"
+                log_event("engine.turn.evaluate.llm_failed", error=str(exc))
+                raise LLMEvaluationError(
+                    f"面试考官暂时开小差了（LLM 评估超时或出错），请稍后重试。原因: {str(exc)[:120]}"
+                ) from exc
         else:
             score, evidence, gaps, llm_score_rationale = self.evaluate(user_message, topic["rubric_keywords"])
             llm_reasoning = "[规则评估] LLM 评估未启用，使用关键词匹配评分。"
@@ -640,16 +727,6 @@ class InterviewEngine:
             question = "达到本轮面试上限，我将结束并生成报告。"
             depth_delta = 0
             decision_reason = "达到最大轮次上限"
-        elif llm_evaluate_failed and score >= 3 and state["depth"] < 1:
-            # If LLM times out but candidate answer has some substance,
-            # prefer one conservative follow-up over immediate topic switch.
-            state["depth"] += 1
-            decision = "deepen"
-            next_action = "follow_up"
-            anchors = "、".join(topic["rubric_keywords"][:2])
-            question = f"你刚提到了 {anchors}，请结合具体线上案例说明设计取舍和失败复盘。"
-            depth_delta = 1
-            decision_reason = "LLM 超时，采用保守追问策略避免过早切题"
         elif llm_recommend_action == "end":
             decision = "end"
             next_action = "end"
@@ -717,6 +794,9 @@ class InterviewEngine:
                 state["finished"] = True
             decision_reason = "规则: 常规推进到下一题"
 
+        # Compute per-dimension scores from overall score + topic mapping
+        dim_scores, primary_dim = self._compute_dimension_scores(topic["topic_name"], score)
+
         turn_eval = TurnEvaluation(
             topic=topic["topic_name"],
             score=score,
@@ -727,6 +807,8 @@ class InterviewEngine:
             decision=decision,  # type: ignore[arg-type]
             reasoning=llm_reasoning,
             reference_answer=llm_reference_answer,
+            dimension_scores=dim_scores,
+            primary_dimension=primary_dim,
         )
         state["evaluations"].append(turn_eval.model_dump())
 
@@ -742,6 +824,8 @@ class InterviewEngine:
                     user_message=user_message,
                     target_role=target_role,
                     conversation_context=conversation_context,
+                    asked_questions=state.get("asked_questions", []),
+                    answer_style=answer_style,
                 )
                 if next_action == "next_topic" and feedback_text:
                     question = f"{feedback_text}{question}"
@@ -751,6 +835,8 @@ class InterviewEngine:
                 if next_action == "follow_up":
                     anchors = "、".join(topic["rubric_keywords"][:2])
                     question = f"继续围绕 {anchors}，请补充关键实现细节与线上指标变化。"
+        # Track asked questions for deduplication
+        state.setdefault("asked_questions", []).append(question)
         log_event(
             "engine.turn.decision",
             decision=turn_eval.decision,

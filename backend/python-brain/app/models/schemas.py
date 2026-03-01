@@ -37,6 +37,8 @@ class TurnEvaluation(BaseModel):
     decision: Literal["deepen", "next_topic", "next_module", "end"]
     reasoning: str | None = None
     reference_answer: str | None = None
+    dimension_scores: dict[str, int] = Field(default_factory=dict)
+    primary_dimension: str | None = None
 
 
 class ResumeUploadResponse(BaseModel):
@@ -53,6 +55,7 @@ class StartInterviewRequest(BaseModel):
     expected_salary: str
     city: str = "北京"
     model: str | None = None
+    answer_style: Literal["concise", "thorough"] = "concise"
 
 
 class StartInterviewResponse(BaseModel):
@@ -76,6 +79,26 @@ class SendMessageResponse(BaseModel):
 class FinishInterviewResponse(BaseModel):
     report_id: int
     report_payload: dict[str, Any]
+
+
+class ResumeInterviewMessage(BaseModel):
+    id: int
+    role: str
+    content: str
+    created_at: datetime
+
+
+class ResumeInterviewResponse(BaseModel):
+    session_id: int
+    status: str
+    target_role: str
+    expected_salary: str
+    city: str
+    model: str
+    answer_style: str
+    outline_summary: list[str]
+    messages: list[ResumeInterviewMessage]
+    turn_count: int
 
 
 class ReportResponse(BaseModel):

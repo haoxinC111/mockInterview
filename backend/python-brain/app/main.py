@@ -8,6 +8,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import router
+from app.core.config import settings
 from app.core.database import init_db
 from app.core.logging import log_event, setup_logging
 from app.core.request_context import set_request_id
@@ -63,6 +64,13 @@ async def request_logging_middleware(request: Request, call_next):
 def on_startup() -> None:
     init_db()
     log_event("app.startup.ready")
+    # Preload Whisper model to avoid cold-start latency on first STT request
+    if settings.stt_enabled:
+        try:
+            from app.services.stt_service import preload_model
+            preload_model()
+        except Exception:
+            pass  # Non-fatal; model will load on first request
 
 
 @app.get("/health")

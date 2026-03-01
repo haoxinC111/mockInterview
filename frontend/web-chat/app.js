@@ -102,6 +102,141 @@ function replaceWords(text) {
   });
 })();
 
+/* ---------- History Modal (断点续作) ---------- */
+(function initHistory() {
+  const btn = byId("historyBtn");
+  const modal = byId("historyModal");
+  const closeBtn = byId("historyCloseBtn");
+  const listEl = byId("historyList");
+
+  async function showHistory() {
+    modal.classList.remove("hidden");
+    listEl.innerHTML = '<p class="text-muted text-center">加载中...</p>';
+    try {
+      const resp = await fetch("/api/v1/sessions?limit=30");
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || "加载失败");
+      const sessions = data.sessions || [];
+      if (!sessions.length) {
+        listEl.innerHTML = '<p class="history-empty">暂无历史面试记录</p>';
+        return;
+      }
+      listEl.innerHTML = "";
+      sessions.forEach(s => {
+        const card = document.createElement("div");
+        card.className = "history-card";
+
+        const isActive = s.status === "active";
+        const statusClass = isActive ? "active" : "finished";
+        const statusText = isActive ? "进行中" : "已结束";
+        const dateStr = new Date(s.created_at).toLocaleString("zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+        const turnInfo = s.turn_count ? `${s.turn_count} 轮` : "0 轮";
+
+        card.innerHTML = `
+          <span class="history-status ${statusClass}">${statusText}</span>
+          <div class="history-card-info">
+            <div class="history-card-title">#${s.session_id} ${escapeHtml(s.target_role)}</div>
+            <div class="history-card-meta">${s.model} · ${turnInfo} · ${dateStr}</div>
+          </div>
+        `;
+
+        const resumeBtn = document.createElement("button");
+        resumeBtn.className = "history-resume-btn";
+        if (isActive) {
+          resumeBtn.textContent = "继续面试";
+          resumeBtn.addEventListener("click", () => resumeSession(s.session_id));
+        } else {
+          resumeBtn.textContent = "查看报告";
+          resumeBtn.addEventListener("click", () => viewFinishedSession(s.session_id));
+        }
+        card.appendChild(resumeBtn);
+        listEl.appendChild(card);
+      });
+    } catch (err) {
+      listEl.innerHTML = `<p class="history-empty">加载失败: ${err.message}</p>`;
+    }
+  }
+
+  async function resumeSession(sid) {
+    listEl.innerHTML = '<p class="text-muted text-center">恢复面试中...</p>';
+    try {
+      const resp = await fetch(`/api/v1/interviews/${sid}/resume`, { method: "POST" });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || "恢复失败");
+
+      // Set global session state
+      sessionId = data.session_id;
+      byId("sessionInfo").textContent = `会话 ID: ${String(sessionId).substring(0, 8)}...`;
+
+      // Replay messages into chat
+      byId("chatBox").innerHTML = "";
+      (data.messages || []).forEach(m => {
+        appendMsg(m.role, m.content);
+      });
+
+      // Enable chat controls
+      byId("chatInput").disabled = false;
+      byId("sendBtn").disabled = false;
+      if (window._micBtn) window._micBtn.disabled = false;
+
+      // Open step 3 (report/finish controls) and collapse sidebar
+      openStep(3);
+      collapseSidebar();
+
+      // Close modal and focus input
+      modal.classList.add("hidden");
+      byId("chatInput").focus();
+      autoResizeChatInput();
+    } catch (err) {
+      alert("恢复面试失败: " + err.message);
+      modal.classList.add("hidden");
+    }
+  }
+
+  async function viewFinishedSession(sid) {
+    modal.classList.add("hidden");
+    // Load messages into chat for reading
+    try {
+      const resp = await fetch(`/api/v1/sessions/${sid}/messages`);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || "加载失败");
+
+      sessionId = sid;
+      byId("sessionInfo").textContent = `会话 ID: ${String(sessionId).substring(0, 8)}... (已结束)`;
+
+      byId("chatBox").innerHTML = "";
+      (data.messages || []).forEach(m => {
+        appendMsg(m.role, m.content);
+      });
+
+      // Keep chat disabled for finished sessions
+      byId("chatInput").disabled = true;
+      byId("sendBtn").disabled = true;
+      if (window._micBtn) window._micBtn.disabled = true;
+      openStep(3);
+      collapseSidebar();
+
+      // Try to load review & report
+      loadReview();
+      try {
+        const reportResp = await fetch(`/api/v1/sessions/${sid}/latest-report`);
+        if (reportResp.ok) {
+          const reportData = await reportResp.json();
+          renderReport(reportData.report_payload);
+        }
+      } catch (_) { /* no report available */ }
+    } catch (err) {
+      alert("加载失败: " + err.message);
+    }
+  }
+
+  btn.addEventListener("click", showHistory);
+  closeBtn.addEventListener("click", () => modal.classList.add("hidden"));
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) modal.classList.add("hidden");
+  });
+})();
+
 /* ---------- Sidebar Collapse ---------- */
 function collapseSidebar() {
   byId("sidebar").classList.add("collapsed");
@@ -462,6 +597,7 @@ byId("startBtn").addEventListener("click", async () => {
       expected_salary: byId("expectedSalary").value,
       city: byId("city").value,
       model: byId("model").value,
+      answer_style: byId("answerStyle").value,
     };
     const resp = await fetch("/api/v1/interviews", {
       method: "POST",
@@ -528,6 +664,13 @@ async function sendMessage() {
     });
     const data = await resp.json();
     
+    if (resp.status === 503) {
+      // LLM temporarily unavailable — restore input and show retry hint
+      input.value = text;
+      autoResizeChatInput();
+      appendMsg("assistant", `⚠️ ${data.detail || "考官暂时开小差了，请稍后点击发送重试。"}`);
+      return;
+    }
     if (!resp.ok) throw new Error(data.detail || "发送失败");
     
     if (data.turn_eval && data.expected_salary) {
@@ -726,10 +869,333 @@ byId("finishBtn").addEventListener("click", async () => {
     // Disable chat
     byId("chatInput").disabled = true;
     byId("sendBtn").disabled = true;
-    appendMsg("assistant", "面试已结束，报告已生成在左侧面板。");
+    appendMsg("assistant", "面试已结束，报告已生成。点击上方「复盘回放」和「能力报告」查看详细分析。");
+
+    // Load review and report panels
+    loadReview();
+    renderReport(data.report_payload);
   } catch (err) {
     alert(err.message);
   } finally {
     setLoading("finishBtn", false, "结束面试并生成报告");
   }
 });
+
+/* ────────── Tab Navigation ────────── */
+(function initTabs() {
+  const tabs = document.querySelectorAll(".chat-tab");
+  tabs.forEach(tab => {
+    tab.addEventListener("click", () => {
+      const targetId = tab.dataset.tab + "Panel";
+      tabs.forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+      tab.classList.add("active");
+      byId(targetId)?.classList.add("active");
+    });
+  });
+})();
+
+/* ────────── Review Replay ────────── */
+let reviewData = [];
+
+async function loadReview() {
+  if (!sessionId) return;
+  try {
+    const resp = await fetch(`/api/v1/sessions/${sessionId}/trace`);
+    const data = await resp.json();
+    if (!resp.ok) return;
+    
+    // Also fetch evaluations from workflow for richer data
+    const wfResp = await fetch(`/api/v1/sessions/${sessionId}/workflow`);
+    const wfData = await wfResp.json();
+    const evaluations = wfData.evaluations || [];
+    
+    reviewData = (data.turns || []).map((turn, i) => ({
+      ...turn,
+      evaluation: evaluations[i] || {},
+    }));
+    renderReviewTimeline(reviewData);
+  } catch (err) {
+    console.warn("Failed to load review data:", err);
+  }
+}
+
+function renderReviewTimeline(turns) {
+  const container = byId("reviewTimeline");
+  container.innerHTML = "";
+  if (!turns.length) {
+    container.innerHTML = '<div class="empty-state"><p>暂无回合数据</p></div>';
+    return;
+  }
+
+  const filter = byId("reviewFilter").value;
+  const filtered = turns.filter(t => {
+    if (filter === "low") return (t.score || 0) <= 4;
+    if (filter === "high") return (t.score || 0) >= 7;
+    return true;
+  });
+
+  if (!filtered.length) {
+    container.innerHTML = '<div class="empty-state"><p>没有匹配的轮次</p></div>';
+    return;
+  }
+
+  filtered.forEach(turn => {
+    const ev = turn.evaluation || {};
+    const score = turn.score || ev.score || 0;
+    const scoreClass = score >= 7 ? "high" : score >= 4 ? "mid" : "low";
+    
+    const el = document.createElement("div");
+    el.className = "review-turn";
+    
+    el.innerHTML = `
+      <div class="review-turn-header">
+        <span class="review-turn-number">第 ${turn.turn} 轮</span>
+        <span class="review-turn-topic">${turn.topic || "未知主题"}</span>
+        <span class="review-score-badge ${scoreClass}">${score}/10</span>
+      </div>
+      <div class="review-turn-body">
+        <div class="review-section">
+          <div class="review-section-label">🎤 你的回答</div>
+          <div class="review-section-content">${escapeHtml(turn.user_input || "")}</div>
+        </div>
+        <div class="review-section">
+          <div class="review-section-label">🤖 面试官反馈</div>
+          <div class="review-section-content">${escapeHtml(turn.assistant_output || "")}</div>
+        </div>
+        ${ev.score_rationale ? `
+        <div class="review-section">
+          <div class="review-section-label">📊 评分依据</div>
+          <div class="review-section-content">${escapeHtml(ev.score_rationale)}</div>
+        </div>` : ""}
+        ${(ev.evidence || []).length ? `
+        <div class="review-section">
+          <div class="review-section-label">✓ 亮点</div>
+          <ul class="review-evidence-list">${(ev.evidence || []).map(e => `<li>${escapeHtml(e)}</li>`).join("")}</ul>
+        </div>` : ""}
+        ${(ev.gaps || []).length ? `
+        <div class="review-section">
+          <div class="review-section-label">✗ 待改进</div>
+          <ul class="review-gaps-list">${(ev.gaps || []).map(g => `<li>${escapeHtml(g)}</li>`).join("")}</ul>
+        </div>` : ""}
+        ${ev.reference_answer ? `
+        <div class="review-section">
+          <div class="review-section-label">📖 参考答案</div>
+          <div class="review-ref-answer">${escapeHtml(ev.reference_answer)}</div>
+        </div>` : ""}
+      </div>
+    `;
+    
+    el.querySelector(".review-turn-header").addEventListener("click", () => {
+      el.classList.toggle("expanded");
+    });
+    
+    container.appendChild(el);
+  });
+}
+
+byId("reviewFilter").addEventListener("change", () => {
+  renderReviewTimeline(reviewData);
+});
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+/* ────────── Report Rendering ────────── */
+function renderReport(payload) {
+  const container = byId("reportContent");
+  if (!payload) {
+    container.innerHTML = '<div class="empty-state"><p>暂无报告数据</p></div>';
+    return;
+  }
+
+  const overallScore = payload.overall_score || 0;
+  const salaryFit = payload.salary_fit || {};
+  const fitClass = salaryFit.level === "较匹配" ? "match" : salaryFit.level === "部分匹配" ? "partial" : "miss";
+
+  let html = `
+    <div class="report-header">
+      <div class="report-overall-score">${overallScore.toFixed(1)}</div>
+      <div class="report-overall-label">综合评分 / 10</div>
+      <div class="report-salary-fit salary-fit-${fitClass}">${salaryFit.level || ""}</div>
+      <p style="font-size:0.85rem;color:var(--text-muted);margin-top:6px;">${salaryFit.advice || ""}</p>
+    </div>
+  `;
+
+  // Radar chart
+  html += '<div class="report-radar-section"><canvas id="radarCanvas" class="radar-canvas" width="320" height="320"></canvas></div>';
+
+  // Dimension cards
+  const dimDetails = payload.dimension_details || {};
+  const dimKeys = Object.keys(dimDetails);
+  if (dimKeys.length) {
+    html += '<div class="report-dimensions">';
+    dimKeys.forEach(dimId => {
+      const dim = dimDetails[dimId];
+      const score = dim.score || 0;
+      const scoreClass = score >= 7 ? "high" : score >= 4 ? "mid" : "low";
+      html += `
+        <div class="dim-card">
+          <div class="dim-card-header">
+            <span class="dim-card-label">${escapeHtml(dim.label)}</span>
+            <span class="dim-card-score ${scoreClass}">${score.toFixed(1)}</span>
+          </div>
+          <div class="dim-bar"><div class="dim-bar-fill ${scoreClass}" style="width:${score * 10}%"></div></div>
+          ${(dim.strengths || []).length ? `<div class="dim-strengths">${dim.strengths.map(s => "✓ " + escapeHtml(s)).join("<br>")}</div>` : ""}
+          ${(dim.gaps || []).length ? `<div class="dim-gaps">${dim.gaps.map(g => "✗ " + escapeHtml(g)).join("<br>")}</div>` : ""}
+        </div>
+      `;
+    });
+    html += '</div>';
+  }
+
+  // Strengths & Risks
+  if ((payload.strengths || []).length) {
+    html += '<h3 style="margin:12px 0 6px;font-size:0.95rem;">✓ 亮点</h3><ul style="padding-left:18px;font-size:0.85rem;line-height:1.7;">';
+    payload.strengths.forEach(s => { html += `<li style="color:#10b981">${escapeHtml(s)}</li>`; });
+    html += '</ul>';
+  }
+  if ((payload.risks || []).length) {
+    html += '<h3 style="margin:12px 0 6px;font-size:0.95rem;">✗ 待加强</h3><ul style="padding-left:18px;font-size:0.85rem;line-height:1.7;">';
+    payload.risks.forEach(r => { html += `<li style="color:#ef4444">${escapeHtml(r)}</li>`; });
+    html += '</ul>';
+  }
+
+  // Action Plan
+  const plan = payload.action_plan_30d || {};
+  html += '<div class="report-action-plan"><h3>📋 30天行动计划</h3>';
+  if ((plan.overall || []).length) {
+    html += '<ul class="action-plan-overall">';
+    (plan.overall || []).forEach(item => { html += `<li>${escapeHtml(item)}</li>`; });
+    html += '</ul>';
+  }
+  const byDim = plan.by_dimension || {};
+  const dimLabelMap = { technical_depth: "技术深度", architecture_design: "架构设计", engineering_practice: "工程实践", communication: "沟通表达" };
+  Object.keys(byDim).forEach(dimId => {
+    const items = byDim[dimId] || [];
+    if (!items.length) return;
+    html += `<div class="action-plan-dim-title">${dimLabelMap[dimId] || dimId}</div><ul class="action-plan-dim">`;
+    items.forEach(item => { html += `<li>${escapeHtml(item)}</li>`; });
+    html += '</ul>';
+  });
+  html += '</div>';
+
+  html += `<p class="report-disclaimer">${escapeHtml(payload.disclaimer || "")}</p>`;
+
+  container.innerHTML = html;
+
+  // Draw radar chart
+  if (payload.radar_chart) {
+    setTimeout(() => drawRadarChart(payload.radar_chart), 50);
+  }
+}
+
+/* ────────── Radar Chart (Canvas) ────────── */
+function drawRadarChart(data) {
+  const canvas = byId("radarCanvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width;
+  const h = canvas.height;
+  const cx = w / 2;
+  const cy = h / 2;
+  const r = Math.min(cx, cy) - 40;
+  const labels = data.labels || [];
+  const values = data.values || [];
+  const benchmarks = data.benchmarks || [];
+  const n = labels.length;
+  if (n < 3) return;
+
+  const isDark = document.documentElement.getAttribute("data-theme") === "dark";
+  const textColor = isDark ? "#e2e8f0" : "#334155";
+  const gridColor = isDark ? "rgba(148,163,184,0.2)" : "rgba(100,116,139,0.15)";
+  const benchColor = isDark ? "rgba(251,191,36,0.5)" : "rgba(245,158,11,0.5)";
+  const fillColor = isDark ? "rgba(129,140,248,0.25)" : "rgba(79,70,229,0.2)";
+  const strokeColor = isDark ? "#818cf8" : "#4f46e5";
+
+  ctx.clearRect(0, 0, w, h);
+
+  // Grid
+  for (let level = 1; level <= 5; level++) {
+    const lr = (r * level) / 5;
+    ctx.beginPath();
+    for (let i = 0; i <= n; i++) {
+      const angle = (Math.PI * 2 * (i % n)) / n - Math.PI / 2;
+      const x = cx + lr * Math.cos(angle);
+      const y = cy + lr * Math.sin(angle);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.strokeStyle = gridColor;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  // Axes
+  for (let i = 0; i < n; i++) {
+    const angle = (Math.PI * 2 * i) / n - Math.PI / 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + r * Math.cos(angle), cy + r * Math.sin(angle));
+    ctx.strokeStyle = gridColor;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  // Benchmark polygon
+  ctx.beginPath();
+  for (let i = 0; i <= n; i++) {
+    const angle = (Math.PI * 2 * (i % n)) / n - Math.PI / 2;
+    const val = (benchmarks[i % n] || 0) / 10;
+    const x = cx + r * val * Math.cos(angle);
+    const y = cy + r * val * Math.sin(angle);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.strokeStyle = benchColor;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 3]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Value polygon
+  ctx.beginPath();
+  for (let i = 0; i <= n; i++) {
+    const angle = (Math.PI * 2 * (i % n)) / n - Math.PI / 2;
+    const val = (values[i % n] || 0) / 10;
+    const x = cx + r * val * Math.cos(angle);
+    const y = cy + r * val * Math.sin(angle);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fillStyle = fillColor;
+  ctx.fill();
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+
+  // Dots + labels
+  ctx.font = "600 13px 'Inter', sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (let i = 0; i < n; i++) {
+    const angle = (Math.PI * 2 * i) / n - Math.PI / 2;
+    const val = (values[i] || 0) / 10;
+    const dx = cx + r * val * Math.cos(angle);
+    const dy = cy + r * val * Math.sin(angle);
+
+    ctx.beginPath();
+    ctx.arc(dx, dy, 4, 0, Math.PI * 2);
+    ctx.fillStyle = strokeColor;
+    ctx.fill();
+
+    // Label
+    const lx = cx + (r + 22) * Math.cos(angle);
+    const ly = cy + (r + 22) * Math.sin(angle);
+    ctx.fillStyle = textColor;
+    ctx.fillText(`${labels[i]} (${(values[i] || 0).toFixed(1)})`, lx, ly);
+  }
+}

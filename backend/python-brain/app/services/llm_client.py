@@ -54,50 +54,63 @@ class RelayLLMClient:
             "Content-Type": "application/json",
         }
 
+        effective_timeout = timeout_s or 90.0
         data = None
         last_error: Exception | None = None
-        async with httpx.AsyncClient(timeout=timeout_s or 20.0) as client:
-            for endpoint in self._candidate_endpoints():
-                try:
-                    log_event(
-                        "llm.request.start",
-                        mode="async",
-                        model=model,
-                        endpoint=endpoint,
-                        force_json_object=force_json_object,
-                        timeout_s=timeout_s or 20.0,
-                        request_payload=payload,
-                    )
-                    log_summary("llm.request.start", model=model, endpoint=endpoint, mode="async")
-                    resp = await client.post(endpoint, headers=headers, json=payload)
-                    resp.raise_for_status()
-                    log_event(
-                        "llm.request.response",
-                        mode="async",
-                        model=model,
-                        endpoint=endpoint,
-                        status_code=resp.status_code,
-                        content_type=resp.headers.get("content-type"),
-                        response_body=resp.text,
-                    )
-                    data = self._parse_response_json(resp)
-                    log_event("llm.request.success", mode="async", model=model, endpoint=endpoint)
-                    content = data["choices"][0]["message"]["content"]
-                    log_summary(
-                        "llm.response",
-                        model=model,
-                        endpoint=endpoint,
-                        mode="async",
-                        status_code=resp.status_code,
-                        llm_content=content,
-                    )
-                    break
-                except Exception as exc:
-                    last_error = exc
-                    log_event("llm.request.error", mode="async", model=model, endpoint=endpoint, error=str(exc))
-                    log_summary("llm.request.error", model=model, endpoint=endpoint, mode="async", error=str(exc))
-            if data is None:
-                raise RuntimeError(f"LLM relay request failed: {last_error}")
+
+        for attempt in range(2):  # 1 initial + 1 retry
+            async with httpx.AsyncClient(timeout=effective_timeout) as client:
+                for endpoint in self._candidate_endpoints():
+                    try:
+                        log_event(
+                            "llm.request.start",
+                            mode="async",
+                            model=model,
+                            endpoint=endpoint,
+                            force_json_object=force_json_object,
+                            timeout_s=effective_timeout,
+                            request_payload=payload,
+                            attempt=attempt,
+                        )
+                        log_summary("llm.request.start", model=model, endpoint=endpoint, mode="async")
+                        resp = await client.post(endpoint, headers=headers, json=payload)
+                        resp.raise_for_status()
+                        log_event(
+                            "llm.request.response",
+                            mode="async",
+                            model=model,
+                            endpoint=endpoint,
+                            status_code=resp.status_code,
+                            content_type=resp.headers.get("content-type"),
+                            response_body=resp.text,
+                        )
+                        data = self._parse_response_json(resp)
+                        log_event("llm.request.success", mode="async", model=model, endpoint=endpoint)
+                        content = data["choices"][0]["message"]["content"]
+                        log_summary(
+                            "llm.response",
+                            model=model,
+                            endpoint=endpoint,
+                            mode="async",
+                            status_code=resp.status_code,
+                            llm_content=content,
+                        )
+                        break
+                    except Exception as exc:
+                        last_error = exc
+                        log_event("llm.request.error", mode="async", model=model, endpoint=endpoint, error=str(exc))
+                        log_summary("llm.request.error", model=model, endpoint=endpoint, mode="async", error=str(exc))
+            if data is not None:
+                break
+            # Retry on any error (timeout, relay HTML page, transient failures)
+            if attempt == 0:
+                effective_timeout = min(effective_timeout * 2, 180.0)
+                log_event("llm.request.retry", mode="async", model=model, new_timeout=effective_timeout, error_type=type(last_error).__name__)
+                continue
+            break
+
+        if data is None:
+            raise RuntimeError(f"LLM relay request failed: {last_error}")
 
         content = data["choices"][0]["message"]["content"]
         reasoning = data["choices"][0]["message"].get("reasoning_content") or None
@@ -133,50 +146,63 @@ class RelayLLMClient:
             "Content-Type": "application/json",
         }
 
+        effective_timeout = timeout_s or 60.0
         data = None
         last_error: Exception | None = None
-        with httpx.Client(timeout=timeout_s or 12.0) as client:
-            for endpoint in self._candidate_endpoints():
-                try:
-                    log_event(
-                        "llm.request.start",
-                        mode="sync",
-                        model=model,
-                        endpoint=endpoint,
-                        force_json_object=force_json_object,
-                        timeout_s=timeout_s or 12.0,
-                        request_payload=payload,
-                    )
-                    log_summary("llm.request.start", model=model, endpoint=endpoint, mode="sync")
-                    resp = client.post(endpoint, headers=headers, json=payload)
-                    resp.raise_for_status()
-                    log_event(
-                        "llm.request.response",
-                        mode="sync",
-                        model=model,
-                        endpoint=endpoint,
-                        status_code=resp.status_code,
-                        content_type=resp.headers.get("content-type"),
-                        response_body=resp.text,
-                    )
-                    data = self._parse_response_json(resp)
-                    log_event("llm.request.success", mode="sync", model=model, endpoint=endpoint)
-                    content = data["choices"][0]["message"]["content"]
-                    log_summary(
-                        "llm.response",
-                        model=model,
-                        endpoint=endpoint,
-                        mode="sync",
-                        status_code=resp.status_code,
-                        llm_content=content,
-                    )
-                    break
-                except Exception as exc:
-                    last_error = exc
-                    log_event("llm.request.error", mode="sync", model=model, endpoint=endpoint, error=str(exc))
-                    log_summary("llm.request.error", model=model, endpoint=endpoint, mode="sync", error=str(exc))
-            if data is None:
-                raise RuntimeError(f"LLM relay request failed: {last_error}")
+
+        for attempt in range(2):  # 1 initial + 1 retry
+            with httpx.Client(timeout=effective_timeout) as client:
+                for endpoint in self._candidate_endpoints():
+                    try:
+                        log_event(
+                            "llm.request.start",
+                            mode="sync",
+                            model=model,
+                            endpoint=endpoint,
+                            force_json_object=force_json_object,
+                            timeout_s=effective_timeout,
+                            request_payload=payload,
+                            attempt=attempt,
+                        )
+                        log_summary("llm.request.start", model=model, endpoint=endpoint, mode="sync")
+                        resp = client.post(endpoint, headers=headers, json=payload)
+                        resp.raise_for_status()
+                        log_event(
+                            "llm.request.response",
+                            mode="sync",
+                            model=model,
+                            endpoint=endpoint,
+                            status_code=resp.status_code,
+                            content_type=resp.headers.get("content-type"),
+                            response_body=resp.text,
+                        )
+                        data = self._parse_response_json(resp)
+                        log_event("llm.request.success", mode="sync", model=model, endpoint=endpoint)
+                        content = data["choices"][0]["message"]["content"]
+                        log_summary(
+                            "llm.response",
+                            model=model,
+                            endpoint=endpoint,
+                            mode="sync",
+                            status_code=resp.status_code,
+                            llm_content=content,
+                        )
+                        break
+                    except Exception as exc:
+                        last_error = exc
+                        log_event("llm.request.error", mode="sync", model=model, endpoint=endpoint, error=str(exc))
+                        log_summary("llm.request.error", model=model, endpoint=endpoint, mode="sync", error=str(exc))
+            if data is not None:
+                break
+            # Retry on any error (timeout, relay HTML page, transient failures)
+            if attempt == 0:
+                effective_timeout = min(effective_timeout * 2, 180.0)
+                log_event("llm.request.retry", mode="sync", model=model, new_timeout=effective_timeout, error_type=type(last_error).__name__)
+                continue
+            break
+
+        if data is None:
+            raise RuntimeError(f"LLM relay request failed: {last_error}")
 
         content = data["choices"][0]["message"]["content"]
         reasoning = data["choices"][0]["message"].get("reasoning_content") or None
@@ -204,13 +230,13 @@ class RelayLLMClient:
             raise
 
     def _candidate_endpoints(self) -> list[str]:
+        """Return the API endpoint. Always use the /v1/ path."""
         base = (self.base_url or "").rstrip("/")
         if not base:
             return []
-        endpoints = [f"{base}/chat/completions"]
-        if not base.endswith("/v1"):
-            endpoints.append(f"{base}/v1/chat/completions")
-        return endpoints
+        if base.endswith("/v1"):
+            return [f"{base}/chat/completions"]
+        return [f"{base}/v1/chat/completions"]
 
     @staticmethod
     def _parse_response_json(resp: httpx.Response) -> dict[str, Any]:

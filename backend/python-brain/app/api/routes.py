@@ -19,13 +19,14 @@ from app.models.schemas import (
     CandidateProfile,
     FinishInterviewResponse,
     ReportResponse,
+    ResumeInterviewResponse,
     ResumeUploadResponse,
     SendMessageRequest,
     SendMessageResponse,
     StartInterviewRequest,
     StartInterviewResponse,
 )
-from app.services.interview_engine import InterviewEngine
+from app.services.interview_engine import InterviewEngine, LLMEvaluationError
 from app.services.report_service import ReportService
 from app.services.resume_parser import ResumeParser
 
@@ -248,7 +249,7 @@ def start_interview(req: StartInterviewRequest, db: Session = Depends(get_sessio
         profile=resume.profile_json,
         resume_text=resume.raw_text,
     )
-    state = engine.init_state(outline, model=selected_model, target_role=req.target_role, expected_salary=req.expected_salary, city=req.city)
+    state = engine.init_state(outline, model=selected_model, target_role=req.target_role, expected_salary=req.expected_salary, city=req.city, answer_style=req.answer_style)
     state["workflow_request_ids"] = [get_request_id()]
     first_question = engine.first_question(
         state,
@@ -261,6 +262,7 @@ def start_interview(req: StartInterviewRequest, db: Session = Depends(get_sessio
         expected_salary=req.expected_salary,
         city=req.city,
         model=selected_model,
+        answer_style=req.answer_style,
         state_json=state,
     )
     db.add(session)
@@ -294,6 +296,56 @@ def start_interview(req: StartInterviewRequest, db: Session = Depends(get_sessio
         first_question=first_question,
     )
     return StartInterviewResponse(session_id=session.id, first_question=first_question, outline_summary=summary)
+
+
+@router.post("/interviews/{session_id}/resume", response_model=ResumeInterviewResponse)
+def resume_interview(session_id: int, db: Session = Depends(get_session)):
+    """Resume an active interview session (断点续作).
+
+    Loads the persisted state and message history so the frontend can
+    reconstruct the chat UI and continue where the candidate left off.
+    Only sessions with status == 'active' can be resumed.
+    """
+    log_event("interview.resume.requested", session_id=session_id)
+    session = db.get(InterviewSession, session_id)
+    if not session:
+        log_event("interview.resume.failed", session_id=session_id, reason="session_not_found")
+        raise HTTPException(status_code=404, detail="session not found")
+    if session.status != "active":
+        log_event("interview.resume.failed", session_id=session_id, reason="session_not_active", status=session.status)
+        raise HTTPException(status_code=400, detail=f"session is {session.status}, only active sessions can be resumed")
+
+    messages = db.exec(
+        select(InterviewMessage).where(InterviewMessage.session_id == session_id).order_by(InterviewMessage.id)
+    ).all()
+
+    state = session.state_json or {}
+    outline_raw = state.get("outline", {})
+    outline_summary = [m.get("module_name", "") for m in outline_raw.get("modules", [])]
+
+    log_event(
+        "interview.resume.completed",
+        session_id=session_id,
+        message_count=len(messages),
+        turn_count=state.get("turn_count", 0),
+    )
+    log_summary("interview.resume", session_id=session_id, message_count=len(messages))
+
+    return ResumeInterviewResponse(
+        session_id=session.id,
+        status=session.status,
+        target_role=session.target_role,
+        expected_salary=session.expected_salary,
+        city=session.city,
+        model=session.model,
+        answer_style=session.answer_style,
+        outline_summary=outline_summary,
+        messages=[
+            {"id": m.id, "role": m.role, "content": m.content, "created_at": m.created_at}
+            for m in messages
+        ],
+        turn_count=state.get("turn_count", 0),
+    )
 
 
 @router.post("/interviews/{session_id}/messages", response_model=SendMessageResponse)
@@ -332,7 +384,17 @@ def send_message(session_id: int, req: SendMessageRequest, db: Session = Depends
         {"role": m.role, "content": m.content}
         for m in context_messages[-10:]
     ]
-    result = engine.process_turn(state_input, req.user_message, conversation_context=conversation_context)
+    try:
+        result = engine.process_turn(state_input, req.user_message, conversation_context=conversation_context)
+    except LLMEvaluationError as exc:
+        # P0: Surface LLM failure as 503 — frontend shows retry UI.
+        # The user message is already persisted, so the context is preserved.
+        db.commit()
+        log_event("interview.turn.llm_unavailable", session_id=session_id, error=str(exc))
+        raise HTTPException(
+            status_code=503,
+            detail=str(exc),
+        )
     # Re-assign a deep copy to ensure JSON field mutation is detected and persisted.
     session.state_json = copy.deepcopy(result.state)
     workflow_request_ids = session.state_json.get("workflow_request_ids", [])
@@ -400,7 +462,7 @@ async def speech_to_text(
     if not settings.stt_enabled:
         raise HTTPException(status_code=503, detail="STT 未启用，请在 .env 中设置 STT_ENABLED=true")
     try:
-        from app.services.stt_service import transcribe_audio
+        from app.services.stt_service import transcribe_audio_async
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
 
@@ -409,7 +471,7 @@ async def speech_to_text(
         raise HTTPException(status_code=400, detail="空音频文件")
 
     try:
-        text = transcribe_audio(
+        text = await transcribe_audio_async(
             audio_bytes,
             filename=audio.filename or "audio.webm",
             context=context or None,
@@ -559,6 +621,9 @@ def list_sessions(limit: int = 20, db: Session = Depends(get_session)):
                 "status": s.status,
                 "target_role": s.target_role,
                 "model": s.model,
+                "answer_style": s.answer_style,
+                "city": s.city,
+                "turn_count": (s.state_json or {}).get("turn_count", 0),
                 "created_at": s.created_at.isoformat(),
                 "updated_at": s.updated_at.isoformat(),
             }

@@ -35,6 +35,7 @@ class InterviewSession(SQLModel, table=True):
     expected_salary: str
     city: str = "北京"
     model: str
+    answer_style: str = "concise"
     status: str = "active"
     state_json: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=datetime.utcnow)
