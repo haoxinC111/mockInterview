@@ -12,3 +12,7 @@ __pycache__/
 
 # OS files
 .DS_Store
+
+# Local git worktrees
+.worktrees/
+worktrees/
