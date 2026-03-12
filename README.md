@@ -11,6 +11,7 @@ AI 模拟面试系统，基于 LLM 的智能面试训练平台。
 当前项目的面试流程编排并不是基于 `langchain` 或 `langgraph` 运行，而是使用项目内自定义的 `InterviewEngine`、结构化状态对象和规则/LLM 混合决策链路实现。仓库里虽然保留了 `app/nodes/` 作为未来扩展 LangGraph 的占位目录，但当前主流程没有引入这两个框架的依赖，也没有在运行时使用它们。
 
 当前建议把 `main` 分支视为“自定义状态机稳定基线”：用于保留现有可运行版本、验证回归行为和对比迁移效果。LangGraph 方向的重构建议放在独立分支和独立 worktree 中推进，避免把实验性改动直接混入主线。
+当前最新的 LangGraph 迁移实现位于 `feat/langgraph-migration` 对应的 worktree：`/Users/chenhaoxin/ccProjects/mockInterview/.worktrees/langgraph-migration`。
 
 ## 功能特性
 

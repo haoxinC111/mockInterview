@@ -11,6 +11,7 @@ An AI-powered mock interview system for interview training, built with LLM techn
 The current interview workflow is not powered by `langchain` or `langgraph`. It is implemented with the project's own `InterviewEngine`, structured state objects, and a hybrid rule-plus-LLM decision flow. The repository keeps `app/nodes/` only as a placeholder for possible future LangGraph expansion, but the current runtime does not depend on or execute either framework.
 
 At this stage, `main` should be treated as the stable custom-state-machine baseline: it preserves the currently working version, supports regression comparison, and acts as the reference point for any workflow migration. LangGraph-oriented refactoring is best developed in a separate branch and a separate worktree so experimental workflow changes do not get mixed directly into the baseline.
+The latest LangGraph migration work currently lives in the `feat/langgraph-migration` worktree at `/Users/chenhaoxin/ccProjects/mockInterview/.worktrees/langgraph-migration`.
 
 ## Features
 
