@@ -1,9 +1,16 @@
 # InterviewSim - 从 0 到 1 开发计划
 创建日期：2026-02-22  
 当前版本：v0.5（Chat-MVP + STT + 10 分制评估）  
-最后更新：2026-03-01
+最后更新：2026-03-12
 
 # AI 模拟面试系统 - 核心架构与开发计划 (Master Plan)
+
+## 当前迁移状态（2026-03-12）
+
+- LangGraph 迁移的最新实现与测试基线继续维护在 `feat/langgraph-migration` worktree：`/Users/chenhaoxin/ccProjects/mockInterview/.worktrees/langgraph-migration`。
+- 当前已完成：workflow flags、shadow mode、golden tests、resume readiness 门控、`training_guidance` 报告语义、mission guard 与 runbook。
+- 当前验证状态：自动化测试通过；**人工未测试**。
+- `main` 仍作为稳定基线，不默认视为已完成 LangGraph 主路径切换。
 
 ## 1. 产品愿景与核心定义
 ### 1.0 项目立意（北极星）
@@ -18,7 +25,21 @@
 **功能决策判据**：如果新功能不能帮候选人更精准地知道"该补什么、怎么补"，就不值得做。
 系统目标是打造一个具备“真实压迫感”和“高度专业性”的 AI 模拟面试官。MVP 阶段垂直聚焦“后端转 Agent 工程师”场景。
 
-### 1.1 v0.5 范围声明
+### 1.1 当前活跃计划入口（2026-03-09）
+
+`PROJECT-PLAN.md` 仍然是项目总计划和长期路线图，但当前正在推进的 Agent 编排迁移方案已经拆分到 `docs/` 下的专门文档中。
+
+- 当前总入口：`docs/README.md`
+- 当前架构选型文档：`docs/designs/2026-03-09-agent-orchestration-migration-strategy.md`
+- 当前执行计划文档：`docs/plans/2026-03-09-langgraph-migration-plan.md`
+
+阅读顺序建议：
+
+1. 先看本文件，理解项目立意、当前能力边界和长期路线
+2. 再看 `docs/designs/2026-03-09-agent-orchestration-migration-strategy.md`，理解为什么后续推荐 `LangGraph`
+3. 最后看 `docs/plans/2026-03-09-langgraph-migration-plan.md`，按任务顺序推进实现
+
+### 1.2 v0.5 范围声明
 - **本阶段目标：** 可演示、可复盘的 MVP，已具备语音输入能力。
 - **交互方式：** Web Chat + 语音输入（本地 Whisper STT）。
 - **已实现能力：** 简历上传与解析（OCR/LLM/规则三级）、大纲驱动追问、10 分制城市薪资感知评估、结构化报告与薪资匹配、暗色模式与隐身模式、语音录入。
@@ -37,6 +58,22 @@
 ### 2.2 后续演进（v0.4+）
 - 恢复 Go 网关（WebSocket 实时双向流）用于语音与高并发连接层。
 - Python 服务保持业务大脑定位，Go 负责流量与音视频编排。
+
+### 2.3 当前推荐的近期演进方向（2026-03-09）
+
+- `main` 继续保留为“自定义状态机稳定基线”，用于回归验证、效果对照和日常修复
+- 新功能主方向不再继续堆叠到单体 `InterviewEngine` 中，而是逐步迁移到 `LangGraph-first` 工作流架构
+- `LangChain` 不作为主流程控制器使用，只在结构化输出、Prompt 模板、检索和工具封装等场景按需引入
+- 所有迁移都必须保持三条红线：
+  - 不削弱“帮助候选人成长”的反馈质量
+  - 不移除现有规则兜底与非 LLM 回退路径
+  - 不破坏当前 FastAPI API 契约
+
+当前推荐的开发方式：
+
+- `main` 工作目录：`/Users/chenhaoxin/ccProjects/mockInterview`
+- LangGraph 独立工作区：`/Users/chenhaoxin/ccProjects/mockInterview/.worktrees/langgraph-migration`
+- 对应远程分支：`origin/feat/langgraph-migration`
 
 ## 3. Python 环境与依赖管理（uv 规范）
 - 统一使用 `uv` 管理 Python 版本、虚拟环境和依赖。
@@ -217,6 +254,25 @@ uv run pytest -q
 ### Phase E（0.5-1 天）稳定性
 - 超时重试、降级策略、日志、样例演示脚本。
 - 验收：连续 20 次回放无阻断错误。
+
+### Phase F（当前活跃计划）LangGraph 迁移准备与分阶段重构
+- 目标：在不破坏现有面试体验和报告质量的前提下，把自定义状态机逐步迁移为可恢复、可观测、可灰度切换的工作流架构
+- 当前主计划文档：`docs/plans/2026-03-09-langgraph-migration-plan.md`
+- 当前设计依据：`docs/designs/2026-03-09-agent-orchestration-migration-strategy.md`
+
+Phase F 当前分为 5 个近期里程碑：
+
+1. 用 golden tests 冻结现有行为，建立迁移前基线
+2. 引入强类型 workflow state，补齐状态边界和版本字段
+3. 增加 workflow runtime flags，支持 legacy / shadow / langgraph 切换
+4. 抽出 workflow facades，把现有领域服务改造成可复用节点能力
+5. 引入 LangGraph skeleton graphs，为报告、简历、面试三个流程建立编排骨架
+
+说明：
+
+- Phase F 是当前最优先的增量开发方向
+- 实际编码优先在 `feat/langgraph-migration` worktree 中进行
+- `main` 只接收已经验证过的稳定方案或文档基线更新
 
 ## 10. 测试策略与出门标准
 
