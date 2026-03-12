@@ -47,6 +47,8 @@ class ResumeUploadResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     cache_hit: bool = False
     cache_id: int | None = None
+    quality_score: int | None = None
+    readiness: str | None = None
 
 
 class StartInterviewRequest(BaseModel):

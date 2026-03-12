@@ -48,6 +48,11 @@ def test_end_to_end_chat_flow() -> None:
     )
     assert send.status_code == 200
     assert "assistant_message" in send.json()
+    turn_eval = send.json()["turn_eval"]
+    assert turn_eval["score_rationale"]
+    assert turn_eval["reference_answer"]
+    assert "evidence" in turn_eval
+    assert "gaps" in turn_eval
 
     finish = client.post(f"/api/v1/interviews/{session_id}/finish")
     assert finish.status_code == 200
@@ -202,3 +207,50 @@ def test_sessions_list_includes_turn_count() -> None:
     sessions = resp.json()["sessions"]
     assert len(sessions) >= 1
     assert "turn_count" in sessions[0]
+
+
+def test_short_resume_blocks_interview_start() -> None:
+    upload = client.post(
+        "/api/v1/resumes",
+        files={"file": ("resume.pdf", b"x", "application/pdf")},
+    )
+    assert upload.status_code == 200
+    assert upload.json()["readiness"] == "needs_more_input"
+    assert upload.json()["quality_score"] == 0
+    assert upload.json()["warnings"]
+
+    start = client.post(
+        "/api/v1/interviews",
+        json={
+            "resume_id": upload.json()["resume_id"],
+            "target_role": "Agent Engineer",
+            "expected_salary": "20k-30k",
+        },
+    )
+    assert start.status_code == 400
+    assert "growth-oriented interview" in start.json()["detail"]
+
+
+def test_finish_without_turns_returns_training_guidance_report() -> None:
+    upload = client.post(
+        "/api/v1/resumes?force_reparse=true",
+        files={"file": ("resume-training.txt", b"Skills: Python, FastAPI\nProject: built APIs for payment retries", "text/plain")},
+    )
+    assert upload.status_code == 200
+
+    start = client.post(
+        "/api/v1/interviews",
+        json={
+            "resume_id": upload.json()["resume_id"],
+            "target_role": "Backend Dev",
+            "expected_salary": "15k-25k",
+        },
+    )
+    assert start.status_code == 200
+    session_id = start.json()["session_id"]
+
+    finish = client.post(f"/api/v1/interviews/{session_id}/finish")
+    assert finish.status_code == 200
+    report_payload = finish.json()["report_payload"]
+    assert report_payload["report_mode"] == "training_guidance"
+    assert report_payload["salary_fit"]["level"] == "样本不足"

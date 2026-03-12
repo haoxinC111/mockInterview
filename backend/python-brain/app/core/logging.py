@@ -75,3 +75,9 @@ def log_summary(event: str, **fields: Any) -> None:
     }
     payload.update(fields)
     logging.getLogger(SUMMARY_LOGGER).info(json.dumps(payload, ensure_ascii=False, default=str))
+
+
+def log_workflow_diff(workflow: str, diff: dict[str, Any], **fields: Any) -> None:
+    if not diff:
+        return
+    log_event(f"workflow.{workflow}.shadow.diff", diff=diff, **fields)

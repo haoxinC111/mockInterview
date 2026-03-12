@@ -1,6 +1,7 @@
 """Tests for ReportService — report generation, dimension aggregation, radar chart."""
 
 from app.services.report_service import ReportService
+from app.workflows.graphs.report_graph import build_report_via_graph
 
 
 def _make_eval(topic: str, score: int, primary_dim: str = "technical_depth",
@@ -24,7 +25,9 @@ def test_build_report_empty_evaluations():
     report = svc.build_report([], "20k-30k", "Agent Engineer")
     assert report["overall_score"] == 0.0
     assert report["strengths"] == []
-    assert report["risks"] == []
+    assert report["risks"]
+    assert report["report_mode"] == "training_guidance"
+    assert report["salary_fit"]["level"] == "样本不足"
     assert "disclaimer" in report
     assert "radar_chart" in report
     assert "action_plan_30d" in report
@@ -110,3 +113,42 @@ def test_dimension_details_populated():
     for dim_id, dim in details.items():
         assert "label" in dim
         assert "score" in dim
+
+
+def test_report_graph_matches_legacy_report_shape():
+    evals = [
+        _make_eval("Transformer 原理", 7, "technical_depth", dim_scores={"technical_depth": 7}),
+        _make_eval("RAG 架构", 4, "architecture_design", dim_scores={"architecture_design": 4}),
+    ]
+    payload = build_report_via_graph(
+        evaluations=evals,
+        expected_salary="20k-30k",
+        target_role="Agent Engineer",
+    )
+    assert "overall_score" in payload
+    assert "action_plan_30d" in payload
+    assert "disclaimer" in payload
+
+
+def test_build_report_empty_evaluations_uses_training_guidance_mode():
+    report = svc.build_report([], "20k-30k", "Agent Engineer")
+    assert report["report_mode"] == "training_guidance"
+    assert report["salary_fit"]["level"] == "样本不足"
+    assert report["risks"]
+    assert report["action_plan_30d"]["overall"]
+
+
+def test_build_report_low_signal_adds_risk_when_missing():
+    evals = [
+        _make_eval(
+            "Transformer 原理",
+            5,
+            "technical_depth",
+            evidence=["知道基本概念"],
+            gaps=[],
+            dim_scores={"technical_depth": 5},
+        )
+    ]
+    report = svc.build_report(evals, "20k-30k", "Agent Engineer")
+    assert report["overall_score"] < 6
+    assert report["risks"]

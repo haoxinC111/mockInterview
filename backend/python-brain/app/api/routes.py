@@ -5,6 +5,7 @@ import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import PlainTextResponse
@@ -12,7 +13,7 @@ from sqlmodel import Session, select
 
 from app.core.config import PROJECT_MISSION, settings
 from app.core.database import get_session
-from app.core.logging import log_event, log_summary
+from app.core.logging import log_event, log_summary, log_workflow_diff
 from app.core.request_context import get_request_id
 from app.models.db import InterviewMessage, InterviewReport, InterviewSession, Resume, ResumeParseCache
 from app.models.schemas import (
@@ -25,10 +26,16 @@ from app.models.schemas import (
     SendMessageResponse,
     StartInterviewRequest,
     StartInterviewResponse,
+    TurnEvaluation,
 )
 from app.services.interview_engine import InterviewEngine, LLMEvaluationError
 from app.services.report_service import ReportService
 from app.services.resume_parser import ResumeParser
+from app.workflows.diffing import diff_resume_results
+from app.workflows.executors import execute_interview_turn, execute_report_generation
+from app.workflows.graphs.resume_graph import run_resume_graph
+from app.workflows.graphs.report_graph import build_report_via_graph
+from app.workflows.runtime import choose_workflow_runtime_from_settings
 
 router = APIRouter(prefix="/api/v1", tags=["interview"])
 engine = InterviewEngine()
@@ -53,6 +60,34 @@ def get_mission():
 
 def _clip(text: str, max_len: int = 1200) -> str:
     return text[:max_len]
+
+
+def _assess_resume_readiness(raw_text: str, profile: CandidateProfile, filename: str) -> dict[str, Any]:
+    score = 0
+    warnings: list[str] = []
+    if len(raw_text.strip()) >= 20:
+        score += 1
+    else:
+        warnings.append("resume_text_too_short")
+    if len(profile.skills) >= 2:
+        score += 1
+    elif profile.skills:
+        warnings.append("skills_signal_too_thin")
+    else:
+        warnings.append("missing_skills")
+    if profile.projects or profile.years_exp:
+        score += 1
+    else:
+        warnings.append("missing_project_or_experience_signal")
+    readiness = "ready" if score >= 2 else "needs_more_input"
+    guidance = []
+    if readiness != "ready":
+        guidance.append("请补充更完整的简历内容，至少包含技能栈、项目经历或工作年限，再开始正式面试。")
+    return {
+        "score": score,
+        "readiness": readiness,
+        "warnings": warnings + guidance,
+    }
 
 
 def _collect_llm_events(request_ids: set[str]) -> list[dict]:
@@ -122,6 +157,7 @@ async def upload_resume(
         db.commit()
 
         profile = CandidateProfile.model_validate(cache.profile_json)
+        quality = cache.profile_json.get("_quality") or _assess_resume_readiness(cache.raw_text, profile, filename)
         log_event(
             "resume.upload.cache_hit",
             filename=filename,
@@ -141,14 +177,46 @@ async def upload_resume(
         return ResumeUploadResponse(
             resume_id=resume.id,
             parsed_profile=profile,
-            warnings=["cache_hit: reused previous parsed profile"],
+            warnings=["cache_hit: reused previous parsed profile", *quality["warnings"]],
             cache_hit=True,
             cache_id=cache.id,
+            quality_score=quality["score"],
+            readiness=quality["readiness"],
         )
 
-    raw_text = ResumeParser.extract_text(content)
-    profile = ResumeParser.parse_profile(raw_text, model=settings.llm_model_default)
-    resume = Resume(filename=filename, raw_text=raw_text, profile_json=profile.model_dump())
+    runtime = choose_workflow_runtime_from_settings().resume
+    if runtime == "langgraph":
+        graph_payload = run_resume_graph(content=content, model=settings.llm_model_default)
+        raw_text = graph_payload["resume_text"]
+        profile = CandidateProfile.model_validate(graph_payload["parsed_profile"])
+        log_event(
+            "resume.upload.runtime",
+            runtime=runtime,
+            extraction_branch=graph_payload.get("extraction_branch"),
+        )
+    elif runtime == "shadow":
+        graph_payload = run_resume_graph(content=content, model=settings.llm_model_default)
+        raw_text = ResumeParser.extract_text(content)
+        profile = ResumeParser.parse_profile(raw_text, model=settings.llm_model_default)
+        log_workflow_diff(
+            "resume",
+            diff_resume_results(
+                {"resume_text": raw_text, "parsed_profile": profile.model_dump()},
+                {
+                    "resume_text": graph_payload.get("resume_text", ""),
+                    "parsed_profile": graph_payload.get("parsed_profile", {}),
+                },
+            ),
+            runtime=runtime,
+            extraction_branch=graph_payload.get("extraction_branch"),
+        )
+    else:
+        raw_text = ResumeParser.extract_text(content)
+        profile = ResumeParser.parse_profile(raw_text, model=settings.llm_model_default)
+    quality = _assess_resume_readiness(raw_text, profile, filename)
+    profile_payload = profile.model_dump()
+    profile_payload["_quality"] = quality
+    resume = Resume(filename=filename, raw_text=raw_text, profile_json=profile_payload)
     db.add(resume)
     db.commit()
     db.refresh(resume)
@@ -156,7 +224,7 @@ async def upload_resume(
     if cache:
         cache.resume_id = resume.id
         cache.raw_text = raw_text
-        cache.profile_json = profile.model_dump()
+        cache.profile_json = profile_payload
         cache.updated_at = datetime.utcnow()
         cache.last_used_at = datetime.utcnow()
         db.add(cache)
@@ -169,24 +237,28 @@ async def upload_resume(
             file_hash=file_hash,
             resume_id=resume.id,
             raw_text=raw_text,
-            profile_json=profile.model_dump(),
+            profile_json=profile_payload,
             hit_count=0,
         )
         db.add(cache)
         db.commit()
         db.refresh(cache)
     warnings = [] if raw_text else ["failed to parse text from file"]
+    warnings.extend(quality["warnings"])
     log_event(
         "resume.upload.parsed",
+        runtime=runtime,
         resume_id=resume.id,
         filename=resume.filename,
         file_hash=file_hash,
         cache_id=cache.id,
         text_len=len(raw_text),
         raw_text_preview=_clip(raw_text),
-        parsed_profile=profile.model_dump(),
+        parsed_profile=profile_payload,
         skills_count=len(profile.skills),
         projects_count=len(profile.projects),
+        quality_score=quality["score"],
+        readiness=quality["readiness"],
     )
     if force_reparse and warnings == []:
         warnings = ["force_reparse: parsed fresh result and refreshed cache"]
@@ -196,6 +268,8 @@ async def upload_resume(
         warnings=warnings,
         cache_hit=False,
         cache_id=cache.id if cache else None,
+        quality_score=quality["score"],
+        readiness=quality["readiness"],
     )
 
 
@@ -241,6 +315,11 @@ def start_interview(req: StartInterviewRequest, db: Session = Depends(get_sessio
         raise HTTPException(status_code=404, detail="resume not found")
 
     selected_model = req.model or settings.llm_model_default
+    profile = CandidateProfile.model_validate(resume.profile_json)
+    quality = resume.profile_json.get("_quality") or _assess_resume_readiness(resume.raw_text, profile, resume.filename)
+    if quality.get("readiness") != "ready":
+        log_event("interview.start.failed", reason="resume_not_ready", resume_id=req.resume_id, quality_score=quality.get("score"))
+        raise HTTPException(status_code=400, detail="resume content is too thin for a growth-oriented interview; please add skills, project details, or experience first")
     profile_skills = resume.profile_json.get("skills", [])
     outline = engine.build_outline(
         profile_skills,
@@ -385,7 +464,12 @@ def send_message(session_id: int, req: SendMessageRequest, db: Session = Depends
         for m in context_messages[-10:]
     ]
     try:
-        result = engine.process_turn(state_input, req.user_message, conversation_context=conversation_context)
+        result = execute_interview_turn(
+            engine=engine,
+            state=state_input,
+            user_message=req.user_message,
+            conversation_context=conversation_context,
+        )
     except LLMEvaluationError as exc:
         # P0: Surface LLM failure as 503 — frontend shows retry UI.
         # The user message is already persisted, so the context is preserved.
@@ -396,21 +480,21 @@ def send_message(session_id: int, req: SendMessageRequest, db: Session = Depends
             detail=str(exc),
         )
     # Re-assign a deep copy to ensure JSON field mutation is detected and persisted.
-    session.state_json = copy.deepcopy(result.state)
+    session.state_json = copy.deepcopy(result["state"])
     workflow_request_ids = session.state_json.get("workflow_request_ids", [])
     if req_id not in workflow_request_ids:
         workflow_request_ids.append(req_id)
     session.state_json["workflow_request_ids"] = workflow_request_ids[-200:]
     session.updated_at = datetime.utcnow()
-    if result.next_action == "end":
+    if result["next_action"] == "end":
         session.status = "finished"
 
     db.add(
         InterviewMessage(
             session_id=session.id,
             role="assistant",
-            content=result.question,
-            metadata_json={"next_action": result.next_action, "request_id": req_id},
+            content=result["question"],
+            metadata_json={"next_action": result["next_action"], "request_id": req_id},
         )
     )
     db.add(session)
@@ -418,12 +502,13 @@ def send_message(session_id: int, req: SendMessageRequest, db: Session = Depends
     log_event(
         "interview.turn.completed",
         session_id=session.id,
-        assistant_message=result.question,
-        turn_eval=result.turn_eval.model_dump(),
-        score=result.turn_eval.score,
-        topic=result.turn_eval.topic,
-        decision=result.turn_eval.decision,
-        next_action=result.next_action,
+        runtime=result.get("runtime"),
+        assistant_message=result["question"],
+        turn_eval=result["turn_eval"],
+        score=result["turn_eval"]["score"],
+        topic=result["turn_eval"]["topic"],
+        decision=result["turn_eval"]["decision"],
+        next_action=result["next_action"],
         turn_count=session.state_json.get("turn_count"),
         module_idx=session.state_json.get("module_idx"),
         topic_idx=session.state_json.get("topic_idx"),
@@ -432,18 +517,18 @@ def send_message(session_id: int, req: SendMessageRequest, db: Session = Depends
     log_summary(
         "assistant.output",
         session_id=session.id,
-        assistant_message=result.question,
-        decision=result.turn_eval.decision,
-        score=result.turn_eval.score,
+        assistant_message=result["question"],
+        decision=result["turn_eval"]["decision"],
+        score=result["turn_eval"]["score"],
     )
 
     # reasoning, reference_answer, score_rationale are now set directly
     # in TurnEvaluation during process_turn() — no extra attachment needed.
 
     return SendMessageResponse(
-        assistant_message=result.question,
-        turn_eval=result.turn_eval,
-        next_action=result.next_action,  # type: ignore[arg-type]
+        assistant_message=result["question"],
+        turn_eval=TurnEvaluation.model_validate(result["turn_eval"]),
+        next_action=result["next_action"],  # type: ignore[arg-type]
         expected_salary=session.expected_salary,
     )
 
@@ -492,7 +577,13 @@ def finish_interview(session_id: int, db: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="session not found")
 
     evaluations = session.state_json.get("evaluations", [])
-    report_payload = report_service.build_report(evaluations, session.expected_salary, session.target_role)
+    report_payload, runtime = execute_report_generation(
+        evaluations=evaluations,
+        expected_salary=session.expected_salary,
+        target_role=session.target_role,
+        legacy_builder=report_service.build_report,
+        graph_builder=build_report_via_graph,
+    )
     report = InterviewReport(session_id=session.id, report_json=report_payload)
     session.status = "finished"
     session.updated_at = datetime.utcnow()
@@ -505,6 +596,7 @@ def finish_interview(session_id: int, db: Session = Depends(get_session)):
         "interview.finish.completed",
         session_id=session.id,
         report_id=report.id,
+        report_runtime=runtime,
         evaluations_count=len(evaluations),
         overall_score=report_payload.get("overall_score"),
         report_payload=report_payload,

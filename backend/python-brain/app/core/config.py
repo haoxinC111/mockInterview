@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     resume_ocr_dpi: int = 216
     interview_engine_use_llm: bool = False
     interview_turn_use_llm: bool = False
+    workflow_use_langgraph: bool = False
+    workflow_shadow_mode: bool = False
+    workflow_report_use_langgraph: bool = False
+    workflow_resume_use_langgraph: bool = False
+    workflow_turn_use_langgraph: bool = False
     log_dir: str = "logs"
     log_file: str = "interviewsim.log"
     summary_log_file: str = "interviewsim.summary.log"

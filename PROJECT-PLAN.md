@@ -3,6 +3,20 @@
 当前版本：v0.5（Chat-MVP + STT + 10 分制评估）  
 最后更新：2026-03-01
 
+## 迁移状态更新（2026-03-12）
+
+- 已落地 resume readiness 门控、0 轮 `training_guidance` 报告语义、低信号报告风险兜底。
+- 当前验证状态：自动化测试通过；**人工未测试**。
+- 当前推荐交付口径：继续保持 worktree / feature branch 迭代，不直接视为 main 已完成切换。
+
+## 迁移状态更新（2026-03-09）
+
+- 编排方向确定为 `LangGraph`（工作流底座）+ `LangChain`（结构化组件层）。
+- 已实现运行时 feature flag：`WORKFLOW_USE_LANGGRAPH`、`WORKFLOW_SHADOW_MODE`、`WORKFLOW_*_USE_LANGGRAPH`。
+- 当前交付策略：默认仍走 legacy，报告/简历/逐轮面试可按模块切换或 shadow 对比。
+- 已引入 mission guard，确保反馈保持“可执行差距 + 参考答案”的成长导向。
+- 迁移执行与切换手册见 `docs/runbooks/langgraph-shadow-mode.md`。
+
 # AI 模拟面试系统 - 核心架构与开发计划 (Master Plan)
 
 ## 1. 产品愿景与核心定义

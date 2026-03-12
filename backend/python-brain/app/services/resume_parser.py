@@ -47,9 +47,14 @@ class ResumeParser:
     _llm_client = RelayLLMClient()
 
     @staticmethod
+    def _looks_like_pdf(content: bytes) -> bool:
+        return content.lstrip().startswith(b"%PDF-")
+
+    @staticmethod
     def extract_text(content: bytes) -> str:
         # Priority 1: OCR via Ollama deepseek-ocr (best quality for complex PDFs)
-        if settings.resume_ocr_enabled:
+        is_pdf = ResumeParser._looks_like_pdf(content)
+        if settings.resume_ocr_enabled and is_pdf:
             try:
                 ocr_text = ResumeParser._extract_text_with_ocr(content)
                 if ocr_text and len(ocr_text.strip()) > 50:
@@ -60,14 +65,15 @@ class ResumeParser:
                 log_event("resume.extract.ocr_failed", error=str(exc))
 
         # Priority 2: pypdf text layer extraction
-        try:
-            reader = PdfReader(BytesIO(content))
-            pages = [page.extract_text() or "" for page in reader.pages]
-            text = ResumeParser._normalize_text("\n".join(pages))
-            if text and len(text.strip()) > 50:
-                return text
-        except Exception:
-            pass
+        if is_pdf:
+            try:
+                reader = PdfReader(BytesIO(content))
+                pages = [page.extract_text() or "" for page in reader.pages]
+                text = ResumeParser._normalize_text("\n".join(pages))
+                if text and len(text.strip()) > 50:
+                    return text
+            except Exception:
+                pass
 
         # Priority 3: raw UTF-8 decode (for .txt files)
         return ResumeParser._normalize_text(content.decode("utf-8", errors="ignore"))

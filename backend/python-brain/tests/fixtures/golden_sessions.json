@@ -1,0 +1,63 @@
+{
+  "turn_cases": [
+    {
+      "name": "strong_answer_deepen",
+      "skills": ["python", "langgraph"],
+      "answer": "I can explain attention self-attention position encoding and 并行 compute in transformers.",
+      "expected": {
+        "topic": "Transformer 原理",
+        "next_action": "follow_up",
+        "decision": "deepen",
+        "score_min": 7,
+        "score_max": 10
+      }
+    },
+    {
+      "name": "weak_answer_next_topic",
+      "skills": ["python"],
+      "answer": "我不太清楚具体实现。",
+      "expected": {
+        "topic": "Transformer 原理",
+        "next_action": "next_topic",
+        "decision": "next_topic",
+        "score_min": 1,
+        "score_max": 4
+      }
+    }
+  ],
+  "report_cases": [
+    {
+      "name": "mixed_scores",
+      "target_role": "Agent Engineer",
+      "expected_salary": "20k-30k",
+      "evaluations": [
+        {
+          "topic": "Transformer 原理",
+          "score": 8,
+          "evidence": ["解释了 attention 与 position encoding 的关系"],
+          "gaps": [],
+          "primary_dimension": "technical_depth",
+          "dimension_scores": {
+            "technical_depth": 8,
+            "architecture_design": 7
+          }
+        },
+        {
+          "topic": "RAG 检索链路",
+          "score": 4,
+          "evidence": [],
+          "gaps": ["未覆盖召回与重排 tradeoff"],
+          "primary_dimension": "architecture_design",
+          "dimension_scores": {
+            "architecture_design": 4,
+            "engineering_practice": 3
+          }
+        }
+      ],
+      "expected": {
+        "score_min": 0,
+        "score_max": 10
+      }
+    }
+  ]
+}

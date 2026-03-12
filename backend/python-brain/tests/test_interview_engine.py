@@ -2,6 +2,7 @@ import pytest
 
 from app.core.config import settings
 from app.services.interview_engine import InterviewEngine, LLMEvaluationError
+from app.workflows.graphs.interview_graph import run_interview_turn_graph
 
 
 @pytest.fixture(autouse=True)
@@ -127,3 +128,16 @@ def test_evaluations_accumulate_in_state() -> None:
     assert len(state["evaluations"]) == 1
     assert state["evaluations"][0]["topic"]
     assert "score" in state["evaluations"][0]
+
+
+def test_interview_graph_matches_legacy_turn_contract() -> None:
+    engine = InterviewEngine()
+    outline = engine.build_outline(["python"])
+    state = engine.init_state(outline)
+
+    result = run_interview_turn_graph(
+        state=state,
+        user_message="I know attention and self-attention.",
+    )
+    assert result["turn_eval"]["topic"]
+    assert result["next_action"] in {"follow_up", "next_topic", "end"}
